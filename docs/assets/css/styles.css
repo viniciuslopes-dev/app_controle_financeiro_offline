@@ -84,6 +84,17 @@ button {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: .55rem .7rem;
+  display: flex;
+  justify-content: space-between;
+  gap: .6rem;
+  align-items: center;
+}
+
+.delete-category-btn {
+  background: var(--danger);
+  font-size: .8rem;
+  padding: .4rem .6rem;
+  white-space: nowrap;
 }
 .summary-grid {
   display: grid;

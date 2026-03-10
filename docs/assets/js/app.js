@@ -8,6 +8,9 @@ const DEFAULT_CATEGORIES = {
   Transporte: ['Combustível', 'Transporte público'],
 };
 
+const FALLBACK_CATEGORY = 'Geral';
+const FALLBACK_SUBCATEGORY = 'Outros';
+
 const form = document.getElementById('tx-form');
 const categoryForm = document.getElementById('category-form');
 const categoryListEl = document.getElementById('category-list');
@@ -94,9 +97,51 @@ function renderCategoryList() {
 
   categoryListEl.innerHTML = rows
     .map(
-      ([category, subs]) => `<li><strong>${category}</strong>: ${subs.join(', ') || 'Sem subcategorias'}</li>`,
+      ([category, subs]) => `
+        <li>
+          <div>
+            <strong>${category}</strong>: ${subs.join(', ') || 'Sem subcategorias'}
+          </div>
+          <button type="button" class="delete-category-btn" data-category="${category}">Excluir categoria</button>
+        </li>
+      `,
     )
     .join('');
+
+  categoryListEl.querySelectorAll('.delete-category-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const category = btn.getAttribute('data-category');
+      deleteCategory(category);
+    });
+  });
+}
+
+function deleteCategory(category) {
+  if (!category) return;
+  const confirmed = window.confirm(`Deseja excluir a categoria "${category}"?`);
+  if (!confirmed) return;
+
+  const categories = loadCategories();
+  if (!categories[category]) return;
+
+  delete categories[category];
+  if (!Object.keys(categories).length) {
+    categories[FALLBACK_CATEGORY] = [FALLBACK_SUBCATEGORY];
+  }
+  saveCategories(categories);
+
+  const updatedTxs = loadTransactions().map((tx) => {
+    if (tx.category !== category) return tx;
+    return {
+      ...tx,
+      category: FALLBACK_CATEGORY,
+      subcategory: FALLBACK_SUBCATEGORY,
+    };
+  });
+  saveTransactions(updatedTxs);
+
+  syncCategoryOptions();
+  render();
 }
 
 function addMonths(dateString, offset) {
@@ -123,8 +168,8 @@ function migrateLegacyData() {
     const migrated = Array.isArray(parsed)
       ? parsed.map((tx) => ({
           ...tx,
-          category: tx.category || 'Geral',
-          subcategory: tx.subcategory || 'Outros',
+          category: tx.category || FALLBACK_CATEGORY,
+          subcategory: tx.subcategory || FALLBACK_SUBCATEGORY,
           recurrence: tx.recurrence || null,
         }))
       : [];
