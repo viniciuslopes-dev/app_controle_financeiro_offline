@@ -4,6 +4,7 @@ const form = document.getElementById('tx-form');
 const txList = document.getElementById('tx-list');
 const summaryEl = document.getElementById('summary');
 const dateInput = document.getElementById('date');
+const refreshAppButton = document.getElementById('refresh-app');
 
 dateInput.value = new Date().toISOString().slice(0, 10);
 
@@ -39,12 +40,14 @@ function renderSummary(items) {
     ['Metas', s.goal],
     ['Saldo', s.balance],
   ]
-    .map(([label, value]) => `
+    .map(
+      ([label, value]) => `
       <div class="summary-item">
         <small>${label}</small>
         <strong>${formatMoney(value)}</strong>
       </div>
-    `)
+    `,
+    )
     .join('');
 }
 
@@ -80,6 +83,20 @@ function render() {
   renderList(txs);
 }
 
+async function refreshAppWithoutLosingData() {
+  if ('serviceWorker' in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+  }
+
+  if ('caches' in window) {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((key) => key.startsWith('finance-pwa-')).map((key) => caches.delete(key)));
+  }
+
+  window.location.reload();
+}
+
 form.addEventListener('submit', (ev) => {
   ev.preventDefault();
   const tx = {
@@ -100,6 +117,12 @@ form.addEventListener('submit', (ev) => {
   dateInput.value = new Date().toISOString().slice(0, 10);
   render();
 });
+
+if (refreshAppButton) {
+  refreshAppButton.addEventListener('click', () => {
+    refreshAppWithoutLosingData().catch(console.error);
+  });
+}
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./service-worker.js').catch(console.error);
