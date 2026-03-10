@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0f172a" />
     <title>Controle Financeiro Offline</title>
     <link rel="manifest" href="./manifest.webmanifest" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./assets/css/styles.css" />
   </head>
   <body>
     <header>
@@ -56,8 +56,14 @@
         <h2>Lançamentos</h2>
         <ul id="tx-list"></ul>
       </section>
+
+      <section class="card">
+        <h2>Manutenção</h2>
+        <p>Se o GitHub Pages mostrar versão antiga, use este botão para atualizar sem perder seus lançamentos.</p>
+        <button id="refresh-app" type="button">Atualizar aplicativo (limpar cache)</button>
+      </section>
     </main>
 
-    <script src="./app.js"></script>
+    <script src="./assets/js/app.js"></script>
   </body>
 </html>
