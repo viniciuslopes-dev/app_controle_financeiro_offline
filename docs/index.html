@@ -16,6 +16,22 @@
 
     <main>
       <section class="card">
+        <h2>Categorias e subcategorias</h2>
+        <form id="category-form" class="nested-grid">
+          <label>
+            Categoria
+            <input id="new-category" maxlength="40" placeholder="Ex.: Moradia" required />
+          </label>
+          <label>
+            Subcategoria
+            <input id="new-subcategory" maxlength="40" placeholder="Ex.: Luz" required />
+          </label>
+          <button type="submit">Adicionar subcategoria</button>
+        </form>
+        <ul id="category-list" class="category-list"></ul>
+      </section>
+
+      <section class="card">
         <h2>Novo lançamento</h2>
         <form id="tx-form">
           <label>
@@ -29,8 +45,18 @@
           </label>
 
           <label>
+            Categoria
+            <select id="category" required></select>
+          </label>
+
+          <label>
+            Subcategoria
+            <select id="subcategory" required></select>
+          </label>
+
+          <label>
             Descrição
-            <input id="description" required maxlength="120" placeholder="Ex.: Mercado" />
+            <input id="description" required maxlength="120" placeholder="Ex.: Conta de luz" />
           </label>
 
           <label>
@@ -43,13 +69,53 @@
             <input id="date" type="date" required />
           </label>
 
+          <label class="inline">
+            <input id="is-recurring" type="checkbox" />
+            Lançamento recorrente (custo fixo)
+          </label>
+
+          <div id="recurrence-fields" class="hidden nested-grid">
+            <label>
+              Frequência
+              <select id="recurrence-frequency">
+                <option value="monthly">Mensal</option>
+                <option value="yearly">Anual</option>
+              </select>
+            </label>
+
+            <label>
+              Repetições
+              <input id="recurrence-count" type="number" min="2" max="60" value="12" />
+            </label>
+          </div>
+
           <button type="submit">Salvar</button>
         </form>
       </section>
 
       <section class="card">
         <h2>Resumo</h2>
+        <label>
+          Mês de referência
+          <input id="month-filter" type="month" />
+        </label>
         <div id="summary" class="summary-grid"></div>
+      </section>
+
+      <section class="card">
+        <h2>Gráficos</h2>
+        <h3>Despesas por categoria (macro, mês selecionado)</h3>
+        <div id="category-chart" class="bar-chart"></div>
+
+        <label>
+          Ver subcategorias da categoria
+          <select id="report-category-filter"></select>
+        </label>
+        <h3>Despesas por subcategoria (detalhado, mês selecionado)</h3>
+        <div id="subcategory-chart" class="bar-chart"></div>
+
+        <h3>Evolução mensal de despesas</h3>
+        <div id="monthly-chart" class="bar-chart"></div>
       </section>
 
       <section class="card">
