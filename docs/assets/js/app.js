@@ -658,13 +658,26 @@ function applyRecurringEdit({ txId, scope, patch, recurrenceCount }) {
   const seriesId = target.recurrence.seriesId;
   const seriesItems = findSeriesItems(all, seriesId);
   const cutoffDate = target.date;
-  const affectedIds = new Set(
-    (normalizedScope === 'future' ? seriesItems.filter((tx) => tx.date >= cutoffDate) : seriesItems).map((tx) => tx.id),
-  );
+  const affectedItems = (normalizedScope === 'future' ? seriesItems.filter((tx) => tx.date >= cutoffDate) : seriesItems)
+    .sort((a, b) => a.date.localeCompare(b.date, 'pt-BR'));
+  const affectedIds = new Set(affectedItems.map((tx) => tx.id));
+
+  const shouldShiftDates = typeof patch.date === 'string' && isValidDateString(patch.date);
+  const sequenceDatesById = new Map();
+  if (shouldShiftDates && affectedItems.length) {
+    const frequency = affectedItems[0].recurrence?.frequency || 'monthly';
+    affectedItems.forEach((tx, index) => {
+      const date = frequency === 'yearly' ? addYears(patch.date, index) : addMonths(patch.date, index);
+      sequenceDatesById.set(tx.id, date);
+    });
+  }
 
   const updated = all.map((tx) => {
     if (!affectedIds.has(tx.id)) return tx;
-    const scopedPatch = normalizedScope === 'single' ? patch : { ...patch, date: tx.date };
+    const scopedPatch = {
+      ...patch,
+      date: shouldShiftDates ? sequenceDatesById.get(tx.id) : tx.date,
+    };
     return applyPatch(tx, scopedPatch);
   });
 
