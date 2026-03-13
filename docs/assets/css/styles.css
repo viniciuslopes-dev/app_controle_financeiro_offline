@@ -116,6 +116,11 @@ button {
   gap: .45rem;
   margin-bottom: 1rem;
 }
+.chart-total {
+  margin: 0 0 .25rem;
+  color: var(--muted);
+  font-size: .92rem;
+}
 .bar-row {
   display: grid;
   grid-template-columns: 160px 1fr auto;

@@ -215,7 +215,7 @@ function filterByMonth(items, month) {
 
 function getTypeLabel(type) {
   const labels = {
-    all: 'Todos',
+    all: 'Saídas (sem receitas)',
     expense: 'Despesas',
     investment: 'Investimentos',
     goal: 'Metas',
@@ -224,22 +224,30 @@ function getTypeLabel(type) {
   return labels[type] || 'Lançamentos';
 }
 
+function filterByType(items, type) {
+  if (!type || type === 'all') {
+    return items.filter((tx) => tx.type !== 'income');
+  }
+
+  return items.filter((tx) => tx.type === type);
+}
+
 function filterByMonthAndType(items, month, type) {
   const monthItems = filterByMonth(items, month);
-  if (!type || type === 'all') return monthItems;
-  return monthItems.filter((tx) => tx.type === type);
+  return filterByType(monthItems, type);
 }
 
 function renderSummary(items, month) {
   const monthItems = filterByMonth(items, month);
   const s = computeSummary(monthItems);
 
+  const totalDiscounted = s.expense + s.investment + s.goal;
+
   summaryEl.innerHTML = [
-    ['Receitas', s.income],
     ['Despesas', s.expense],
     ['Investimentos', s.investment],
     ['Metas', s.goal],
-    ['Saldo', s.balance],
+    ['Total descontado', totalDiscounted],
   ]
     .map(
       ([label, value]) => `
@@ -258,8 +266,9 @@ function renderBars(container, rows, emptyMessage = 'Sem dados para o período s
     return;
   }
 
+  const total = rows.reduce((acc, row) => acc + row.value, 0);
   const maxValue = Math.max(...rows.map((r) => r.value), 1);
-  container.innerHTML = rows
+  container.innerHTML = `<p class="chart-total">Total: <strong>${formatMoney(total)}</strong></p>` + rows
     .map((row) => {
       const width = Math.max((row.value / maxValue) * 100, 2);
       return `
@@ -325,7 +334,7 @@ function renderSubcategoryChart(items, month) {
 
 function renderMonthlyChart(items) {
   const selectedType = reportTypeFilter.value;
-  const filteredByType = selectedType === 'all' ? items : items.filter((tx) => tx.type === selectedType);
+  const filteredByType = filterByType(items, selectedType);
   const monthly = filteredByType.reduce((acc, tx) => {
     const month = tx.date.slice(0, 7);
     acc[month] = (acc[month] || 0) + tx.amount;
