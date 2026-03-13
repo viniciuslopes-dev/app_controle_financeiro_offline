@@ -15,7 +15,6 @@
 html, body {
   width: 100%;
   max-width: 100%;
-  overflow-x: hidden;
 }
 body {
   margin: 0;
@@ -74,11 +73,16 @@ input, select, button {
   border-radius: 10px;
   border: 1px solid var(--border);
 }
+input, select {
+  width: 100%;
+  max-width: 100%;
+}
 button {
   border: 0;
   background: var(--primary);
   color: #fff;
   cursor: pointer;
+  max-width: 100%;
 }
 .category-list {
   list-style: none;
@@ -95,6 +99,13 @@ button {
   justify-content: space-between;
   gap: .6rem;
   align-items: center;
+  min-width: 0;
+}
+.category-list li > div {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .delete-category-btn {
@@ -130,7 +141,7 @@ button {
 }
 .bar-row {
   display: grid;
-  grid-template-columns: 160px 1fr auto;
+  grid-template-columns: minmax(80px, 160px) 1fr auto;
   align-items: center;
   gap: .5rem;
   font-size: .9rem;
@@ -264,7 +275,7 @@ button {
 
 .modal.hidden { display: none; }
 
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   #category-form {
     display: flex;
     flex-direction: column;
