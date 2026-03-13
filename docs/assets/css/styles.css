@@ -73,7 +73,7 @@ input, select, button {
   border-radius: 10px;
   border: 1px solid var(--border);
 }
-input, select {
+input:not([type="checkbox"]):not([type="radio"]), select {
   width: 100%;
   max-width: 100%;
 }
