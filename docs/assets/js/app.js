@@ -30,6 +30,9 @@ const reportTypeFilter = document.getElementById('report-type-filter');
 const recurringCheckbox = document.getElementById('is-recurring');
 const recurrenceFields = document.getElementById('recurrence-fields');
 const refreshAppButton = document.getElementById('refresh-app');
+const exportDataButton = document.getElementById('export-data');
+const importDataInput = document.getElementById('import-data-file');
+const importDataButton = document.getElementById('import-data');
 
 const editModal = document.getElementById('edit-modal');
 const editForm = document.getElementById('edit-form');
@@ -234,6 +237,122 @@ function loadTransactions() {
 
 function saveTransactions(items) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+}
+
+function sanitizeTransaction(tx) {
+  if (!tx || typeof tx !== 'object') return null;
+
+  const description = normalizeText(String(tx.description || ''));
+  const amount = sanitizeAmount(tx.amount);
+  const date = typeof tx.date === 'string' ? tx.date : '';
+  const type = ['income', 'expense', 'investment', 'goal'].includes(tx.type) ? tx.type : null;
+
+  if (!description || amount === null || !isValidDateString(date) || !type) return null;
+
+  const category = normalizeText(String(tx.category || FALLBACK_CATEGORY)) || FALLBACK_CATEGORY;
+  const subcategory = normalizeText(String(tx.subcategory || FALLBACK_SUBCATEGORY)) || FALLBACK_SUBCATEGORY;
+
+  return {
+    id: typeof tx.id === 'string' && tx.id ? tx.id : crypto.randomUUID(),
+    type,
+    category,
+    subcategory,
+    description,
+    amount,
+    date,
+    recurrence: tx.recurrence && typeof tx.recurrence === 'object' ? tx.recurrence : null,
+  };
+}
+
+function buildBackupPayload() {
+  return {
+    version: '1.0',
+    exportedAt: new Date().toISOString(),
+    transactions: loadTransactions(),
+    categories: loadCategories(),
+  };
+}
+
+function downloadBackupFile(payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const dateTag = new Date().toISOString().slice(0, 10);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `controle-financeiro-backup-${dateTag}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function validateBackupPayload(payload) {
+  if (!payload || typeof payload !== 'object') return { valid: false, message: 'Arquivo inválido.' };
+  if (payload.version !== '1.0') {
+    return { valid: false, message: 'Versão de backup não suportada. Exporte um novo arquivo no app de origem.' };
+  }
+
+  if (!Array.isArray(payload.transactions)) {
+    return { valid: false, message: 'Backup inválido: lista de lançamentos ausente.' };
+  }
+
+  if (!payload.categories || typeof payload.categories !== 'object' || Array.isArray(payload.categories)) {
+    return { valid: false, message: 'Backup inválido: categorias ausentes.' };
+  }
+
+  return { valid: true };
+}
+
+function normalizeImportedCategories(categories) {
+  const normalized = {};
+
+  Object.entries(categories).forEach(([category, subcategories]) => {
+    const categoryName = normalizeText(String(category || ''));
+    if (!categoryName) return;
+
+    const normalizedSubs = Array.isArray(subcategories)
+      ? subcategories.map((sub) => normalizeText(String(sub || ''))).filter(Boolean)
+      : [];
+
+    normalized[categoryName] = Array.from(new Set(normalizedSubs));
+  });
+
+  if (!Object.keys(normalized).length) {
+    normalized[FALLBACK_CATEGORY] = [FALLBACK_SUBCATEGORY];
+  }
+
+  return normalized;
+}
+
+function importBackupPayload(payload) {
+  const categories = normalizeImportedCategories(payload.categories || {});
+  const transactions = payload.transactions.map((tx) => sanitizeTransaction(tx)).filter(Boolean);
+
+  transactions.forEach((tx) => {
+    if (!categories[tx.category]) categories[tx.category] = [];
+    if (!categories[tx.category].includes(tx.subcategory)) {
+      categories[tx.category].push(tx.subcategory);
+    }
+  });
+
+  if (!transactions.length) {
+    return { ok: false, message: 'Nenhum lançamento válido foi encontrado no arquivo.' };
+  }
+
+  if (!window.confirm('Importar backup irá substituir os dados atuais. Deseja continuar?')) {
+    return { ok: false, cancelled: true };
+  }
+
+  if (migrateRecurringSeriesData(transactions)) {
+    recalcAllSeriesMetadata(transactions);
+  }
+
+  saveCategories(categories);
+  saveTransactions(transactions);
+  syncCategoryOptions();
+  render();
+
+  return { ok: true, importedCount: transactions.length };
 }
 
 function formatMoney(value) {
@@ -883,6 +1002,45 @@ form.addEventListener('submit', (ev) => {
 if (refreshAppButton) {
   refreshAppButton.addEventListener('click', () => {
     refreshAppWithoutLosingData().catch(console.error);
+  });
+}
+
+if (exportDataButton) {
+  exportDataButton.addEventListener('click', () => {
+    downloadBackupFile(buildBackupPayload());
+  });
+}
+
+if (importDataButton) {
+  importDataButton.addEventListener('click', () => {
+    const file = importDataInput?.files?.[0];
+    if (!file) {
+      window.alert('Selecione um arquivo .json para importar.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const payload = JSON.parse(String(reader.result || '{}'));
+        const validation = validateBackupPayload(payload);
+        if (!validation.valid) {
+          window.alert(validation.message);
+          return;
+        }
+
+        const result = importBackupPayload(payload);
+        if (result.ok) {
+          importDataInput.value = '';
+          window.alert(`Backup importado com sucesso (${result.importedCount} lançamento(s)).`);
+        } else if (!result.cancelled) {
+          window.alert(result.message || 'Não foi possível importar o backup.');
+        }
+      } catch {
+        window.alert('Não foi possível ler o arquivo. Verifique se ele é um JSON válido exportado pelo app.');
+      }
+    };
+    reader.readAsText(file);
   });
 }
 

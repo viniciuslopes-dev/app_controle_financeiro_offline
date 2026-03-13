@@ -228,6 +228,22 @@ button {
   border: 1px solid var(--border);
 }
 
+
+.backup-actions {
+  display: grid;
+  gap: .7rem;
+}
+
+.backup-actions p {
+  margin: 0;
+}
+
+.backup-actions input[type="file"] {
+  padding: .45rem;
+  border: 1px dashed var(--border);
+  background: color-mix(in srgb, var(--card) 70%, var(--bg));
+}
+
 .modal {
   position: fixed;
   inset: 0;
