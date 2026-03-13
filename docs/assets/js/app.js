@@ -776,9 +776,15 @@ function applyRecurringEdit({ txId, scope, patch, recurrenceCount }) {
 
   const seriesId = target.recurrence.seriesId;
   const seriesItems = findSeriesItems(all, seriesId);
+  const targetIndex = seriesItems.findIndex((tx) => tx.id === txId);
   const cutoffDate = target.date;
-  const affectedItems = (normalizedScope === 'future' ? seriesItems.filter((tx) => tx.date >= cutoffDate) : seriesItems)
-    .sort((a, b) => a.date.localeCompare(b.date, 'pt-BR'));
+  const affectedItems = (
+    normalizedScope === 'future'
+      ? targetIndex >= 0
+        ? seriesItems.slice(targetIndex)
+        : seriesItems.filter((tx) => tx.date >= cutoffDate)
+      : seriesItems
+  ).sort((a, b) => a.date.localeCompare(b.date, 'pt-BR'));
   const affectedIds = new Set(affectedItems.map((tx) => tx.id));
 
   const shouldShiftDates = typeof patch.date === 'string' && isValidDateString(patch.date);
