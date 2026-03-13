@@ -104,17 +104,30 @@
 
       <section class="card">
         <h2>Gráficos</h2>
-        <h3>Despesas por categoria (macro, mês selecionado)</h3>
+        <h3>Composição por tipo (mês selecionado)</h3>
+        <div id="type-composition-chart" class="bar-chart"></div>
+
+        <h3>Lançamentos por categoria (macro, mês selecionado)</h3>
         <div id="category-chart" class="bar-chart"></div>
+
+        <label>
+          Ver dados do tipo
+          <select id="report-type-filter">
+            <option value="all">Todos</option>
+            <option value="expense">Despesa</option>
+            <option value="investment">Investimento</option>
+            <option value="goal">Meta</option>
+          </select>
+        </label>
 
         <label>
           Ver subcategorias da categoria
           <select id="report-category-filter"></select>
         </label>
-        <h3>Despesas por subcategoria (detalhado, mês selecionado)</h3>
+        <h3>Lançamentos por subcategoria (detalhado, mês selecionado)</h3>
         <div id="subcategory-chart" class="bar-chart"></div>
 
-        <h3>Evolução mensal de despesas</h3>
+        <h3>Evolução mensal (tipo selecionado)</h3>
         <div id="monthly-chart" class="bar-chart"></div>
       </section>
 
