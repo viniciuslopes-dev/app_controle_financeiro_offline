@@ -142,6 +142,20 @@
       </section>
 
       <section class="card">
+        <h2>Backup e restauração</h2>
+        <p>Baixe um arquivo com seus lançamentos para abrir em outro computador ou celular.</p>
+        <div class="backup-actions">
+          <button id="export-data" type="button">Baixar lançamentos (backup)</button>
+
+          <label for="import-data-file">
+            Selecionar arquivo de backup (.json)
+            <input id="import-data-file" type="file" accept="application/json" />
+          </label>
+          <button id="import-data" type="button" class="secondary-btn">Importar backup</button>
+        </div>
+      </section>
+
+      <section class="card">
         <h2>Manutenção</h2>
         <p>Se o GitHub Pages mostrar versão antiga, use este botão para atualizar sem perder seus lançamentos.</p>
         <button id="refresh-app" type="button">Atualizar aplicativo (limpar cache)</button>
