@@ -16,6 +16,7 @@ const categoryForm = document.getElementById('category-form');
 const categoryListEl = document.getElementById('category-list');
 const txList = document.getElementById('tx-list');
 const summaryEl = document.getElementById('summary');
+const typeCompositionChartEl = document.getElementById('type-composition-chart');
 const categoryChartEl = document.getElementById('category-chart');
 const subcategoryChartEl = document.getElementById('subcategory-chart');
 const monthlyChartEl = document.getElementById('monthly-chart');
@@ -24,6 +25,7 @@ const monthFilterInput = document.getElementById('month-filter');
 const categoryInput = document.getElementById('category');
 const subcategoryInput = document.getElementById('subcategory');
 const reportCategoryFilter = document.getElementById('report-category-filter');
+const reportTypeFilter = document.getElementById('report-type-filter');
 const recurringCheckbox = document.getElementById('is-recurring');
 const recurrenceFields = document.getElementById('recurrence-fields');
 const refreshAppButton = document.getElementById('refresh-app');
@@ -211,6 +213,23 @@ function filterByMonth(items, month) {
   return items.filter((tx) => tx.date.startsWith(month));
 }
 
+function getTypeLabel(type) {
+  const labels = {
+    all: 'Todos',
+    expense: 'Despesas',
+    investment: 'Investimentos',
+    goal: 'Metas',
+  };
+
+  return labels[type] || 'Lançamentos';
+}
+
+function filterByMonthAndType(items, month, type) {
+  const monthItems = filterByMonth(items, month);
+  if (!type || type === 'all') return monthItems;
+  return monthItems.filter((tx) => tx.type === type);
+}
+
 function renderSummary(items, month) {
   const monthItems = filterByMonth(items, month);
   const s = computeSummary(monthItems);
@@ -254,9 +273,24 @@ function renderBars(container, rows, emptyMessage = 'Sem dados para o período s
     .join('');
 }
 
+function renderTypeCompositionChart(items, month) {
+  const monthItems = filterByMonth(items, month).filter((tx) => ['expense', 'investment', 'goal'].includes(tx.type));
+  const byType = monthItems.reduce((acc, tx) => {
+    acc[tx.type] = (acc[tx.type] || 0) + tx.amount;
+    return acc;
+  }, {});
+
+  const rows = Object.entries(byType)
+    .map(([type, value]) => ({ label: getTypeLabel(type), value }))
+    .sort((a, b) => b.value - a.value);
+
+  renderBars(typeCompositionChartEl, rows, 'Sem despesas, investimentos ou metas para o período selecionado.');
+}
+
 function renderCategoryChart(items, month) {
-  const expenses = filterByMonth(items, month).filter((tx) => tx.type === 'expense');
-  const byCategory = expenses.reduce((acc, tx) => {
+  const selectedType = reportTypeFilter.value;
+  const filtered = filterByMonthAndType(items, month, selectedType);
+  const byCategory = filtered.reduce((acc, tx) => {
     acc[tx.category] = (acc[tx.category] || 0) + tx.amount;
     return acc;
   }, {});
@@ -265,13 +299,16 @@ function renderCategoryChart(items, month) {
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => b.value - a.value);
 
-  renderBars(categoryChartEl, rows);
+  renderBars(categoryChartEl, rows, `Sem lançamentos de ${getTypeLabel(selectedType).toLowerCase()} para este filtro.`);
 }
 
 function renderSubcategoryChart(items, month) {
   const selectedCategory = reportCategoryFilter.value;
-  const expenses = filterByMonth(items, month).filter((tx) => tx.type === 'expense');
-  const filtered = selectedCategory ? expenses.filter((tx) => tx.category === selectedCategory) : expenses;
+  const selectedType = reportTypeFilter.value;
+  const filteredByType = filterByMonthAndType(items, month, selectedType);
+  const filtered = selectedCategory
+    ? filteredByType.filter((tx) => tx.category === selectedCategory)
+    : filteredByType;
 
   const bySubcategory = filtered.reduce((acc, tx) => {
     const label = `${tx.category} › ${tx.subcategory || 'Outros'}`;
@@ -283,24 +320,24 @@ function renderSubcategoryChart(items, month) {
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => b.value - a.value);
 
-  renderBars(subcategoryChartEl, rows, 'Sem despesas em subcategorias para este filtro.');
+  renderBars(subcategoryChartEl, rows, `Sem subcategorias para ${getTypeLabel(selectedType).toLowerCase()} neste filtro.`);
 }
 
 function renderMonthlyChart(items) {
-  const monthly = items
-    .filter((tx) => tx.type === 'expense')
-    .reduce((acc, tx) => {
-      const month = tx.date.slice(0, 7);
-      acc[month] = (acc[month] || 0) + tx.amount;
-      return acc;
-    }, {});
+  const selectedType = reportTypeFilter.value;
+  const filteredByType = selectedType === 'all' ? items : items.filter((tx) => tx.type === selectedType);
+  const monthly = filteredByType.reduce((acc, tx) => {
+    const month = tx.date.slice(0, 7);
+    acc[month] = (acc[month] || 0) + tx.amount;
+    return acc;
+  }, {});
 
   const rows = Object.entries(monthly)
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => (a.label > b.label ? 1 : -1))
     .slice(-12);
 
-  renderBars(monthlyChartEl, rows);
+  renderBars(monthlyChartEl, rows, `Sem evolução mensal para ${getTypeLabel(selectedType).toLowerCase()} no período.`);
 }
 
 function renderList(items, month) {
@@ -356,6 +393,7 @@ function render() {
   const txs = loadTransactions();
   const selectedMonth = getCurrentMonthFilter();
   renderSummary(txs, selectedMonth);
+  renderTypeCompositionChart(txs, selectedMonth);
   renderCategoryChart(txs, selectedMonth);
   renderSubcategoryChart(txs, selectedMonth);
   renderMonthlyChart(txs);
@@ -389,6 +427,7 @@ categoryForm.addEventListener('submit', (ev) => {
 
 categoryInput.addEventListener('change', syncSubcategoryOptions);
 reportCategoryFilter.addEventListener('change', render);
+reportTypeFilter.addEventListener('change', render);
 
 recurringCheckbox.addEventListener('change', () => {
   recurrenceFields.classList.toggle('hidden', !recurringCheckbox.checked);
