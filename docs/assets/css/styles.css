@@ -265,6 +265,18 @@ button {
 .modal.hidden { display: none; }
 
 @media (max-width: 640px) {
+  #category-form {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #category-form > label,
+  #category-form > button {
+    width: 100%;
+    margin: 0;
+  }
+
   .nested-grid {
     grid-template-columns: 1fr;
   }
