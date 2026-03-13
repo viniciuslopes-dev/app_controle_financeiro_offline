@@ -17,6 +17,7 @@ const categoryListEl = document.getElementById('category-list');
 const txList = document.getElementById('tx-list');
 const summaryEl = document.getElementById('summary');
 const typeCompositionChartEl = document.getElementById('type-composition-chart');
+const inflowOutflowChartEl = document.getElementById('inflow-outflow-chart');
 const categoryChartEl = document.getElementById('category-chart');
 const subcategoryChartEl = document.getElementById('subcategory-chart');
 const monthlyChartEl = document.getElementById('monthly-chart');
@@ -215,7 +216,9 @@ function filterByMonth(items, month) {
 
 function getTypeLabel(type) {
   const labels = {
-    all: 'Saídas (sem receitas)',
+    all: 'Todos os lançamentos',
+    outflow: 'Saídas',
+    income: 'Entradas',
     expense: 'Despesas',
     investment: 'Investimentos',
     goal: 'Metas',
@@ -225,9 +228,12 @@ function getTypeLabel(type) {
 }
 
 function filterByType(items, type) {
-  if (!type || type === 'all') {
+  if (!type || type === 'outflow') {
     return items.filter((tx) => tx.type !== 'income');
   }
+
+  if (type === 'all') return items;
+  if (type === 'income') return items.filter((tx) => tx.type === 'income');
 
   return items.filter((tx) => tx.type === type);
 }
@@ -244,10 +250,12 @@ function renderSummary(items, month) {
   const totalDiscounted = s.expense + s.investment + s.goal;
 
   summaryEl.innerHTML = [
+    ['Receitas', s.income],
     ['Despesas', s.expense],
     ['Investimentos', s.investment],
     ['Metas', s.goal],
     ['Total descontado', totalDiscounted],
+    ['Saldo', s.balance],
   ]
     .map(
       ([label, value]) => `
@@ -260,26 +268,50 @@ function renderSummary(items, month) {
     .join('');
 }
 
-function renderBars(container, rows, emptyMessage = 'Sem dados para o período selecionado.') {
+function renderBars(
+  container,
+  rows,
+  emptyMessage = 'Sem dados para o período selecionado.',
+  options = {},
+) {
+  const { summaryLabel = 'Total', summaryValue, tone = 'default' } = options;
+
   if (!rows.length) {
     container.innerHTML = `<p class="empty">${emptyMessage}</p>`;
     return;
   }
 
   const total = rows.reduce((acc, row) => acc + row.value, 0);
+  const headerValue = summaryValue ?? total;
   const maxValue = Math.max(...rows.map((r) => r.value), 1);
-  container.innerHTML = `<p class="chart-total">Total: <strong>${formatMoney(total)}</strong></p>` + rows
+  container.innerHTML = `<p class="chart-total">${summaryLabel}: <strong>${formatMoney(headerValue)}</strong></p>` + rows
     .map((row) => {
       const width = Math.max((row.value / maxValue) * 100, 2);
+      const rowTone = row.tone || tone;
       return `
         <div class="bar-row">
           <small>${row.label}</small>
-          <div class="bar"><span style="width:${width}%"></span></div>
+          <div class="bar bar-${rowTone}"><span style="width:${width}%"></span></div>
           <strong>${formatMoney(row.value)}</strong>
         </div>
       `;
     })
     .join('');
+}
+
+function renderInflowOutflowChart(items, month) {
+  const monthItems = filterByMonth(items, month);
+  const summary = computeSummary(monthItems);
+  const rows = [
+    { label: 'Entradas', value: summary.income, tone: 'income' },
+    {
+      label: 'Saídas',
+      value: summary.expense + summary.investment + summary.goal,
+      tone: 'outflow',
+    },
+  ];
+
+  renderBars(inflowOutflowChartEl, rows, 'Sem dados de entradas e saídas para o período selecionado.');
 }
 
 function renderTypeCompositionChart(items, month) {
@@ -308,7 +340,13 @@ function renderCategoryChart(items, month) {
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => b.value - a.value);
 
-  renderBars(categoryChartEl, rows, `Sem lançamentos de ${getTypeLabel(selectedType).toLowerCase()} para este filtro.`);
+  const tone = selectedType === 'income' ? 'income' : selectedType === 'all' ? 'default' : 'outflow';
+  renderBars(
+    categoryChartEl,
+    rows,
+    `Sem lançamentos de ${getTypeLabel(selectedType).toLowerCase()} para este filtro.`,
+    { tone },
+  );
 }
 
 function renderSubcategoryChart(items, month) {
@@ -329,7 +367,13 @@ function renderSubcategoryChart(items, month) {
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => b.value - a.value);
 
-  renderBars(subcategoryChartEl, rows, `Sem subcategorias para ${getTypeLabel(selectedType).toLowerCase()} neste filtro.`);
+  const tone = selectedType === 'income' ? 'income' : selectedType === 'all' ? 'default' : 'outflow';
+  renderBars(
+    subcategoryChartEl,
+    rows,
+    `Sem subcategorias para ${getTypeLabel(selectedType).toLowerCase()} neste filtro.`,
+    { tone },
+  );
 }
 
 function renderMonthlyChart(items) {
@@ -346,7 +390,15 @@ function renderMonthlyChart(items) {
     .sort((a, b) => (a.label > b.label ? 1 : -1))
     .slice(-12);
 
-  renderBars(monthlyChartEl, rows, `Sem evolução mensal para ${getTypeLabel(selectedType).toLowerCase()} no período.`);
+  const average = rows.length ? rows.reduce((acc, row) => acc + row.value, 0) / rows.length : 0;
+  const tone = selectedType === 'income' ? 'income' : selectedType === 'all' ? 'default' : 'outflow';
+
+  renderBars(
+    monthlyChartEl,
+    rows,
+    `Sem evolução mensal para ${getTypeLabel(selectedType).toLowerCase()} no período.`,
+    { summaryLabel: 'Média mensal', summaryValue: average, tone },
+  );
 }
 
 function renderList(items, month) {
@@ -403,6 +455,7 @@ function render() {
   const selectedMonth = getCurrentMonthFilter();
   renderSummary(txs, selectedMonth);
   renderTypeCompositionChart(txs, selectedMonth);
+  renderInflowOutflowChart(txs, selectedMonth);
   renderCategoryChart(txs, selectedMonth);
   renderSubcategoryChart(txs, selectedMonth);
   renderMonthlyChart(txs);
