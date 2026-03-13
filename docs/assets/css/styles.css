@@ -6,6 +6,8 @@
   --muted: #475569;
   --primary: #2563eb;
   --danger: #dc2626;
+  --income: #16a34a;
+  --outflow: #dc2626;
   --border: #e2e8f0;
 }
 
@@ -142,6 +144,22 @@ button {
   display: block;
   height: 100%;
   background: var(--primary);
+}
+
+.bar-income {
+  background: #dcfce7;
+}
+
+.bar-income > span {
+  background: var(--income);
+}
+
+.bar-outflow {
+  background: #fee2e2;
+}
+
+.bar-outflow > span {
+  background: var(--outflow);
 }
 #tx-list {
   list-style: none;
