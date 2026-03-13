@@ -31,6 +31,21 @@ const recurringCheckbox = document.getElementById('is-recurring');
 const recurrenceFields = document.getElementById('recurrence-fields');
 const refreshAppButton = document.getElementById('refresh-app');
 
+const editModal = document.getElementById('edit-modal');
+const editForm = document.getElementById('edit-form');
+const editTxIdInput = document.getElementById('edit-tx-id');
+const editTypeInput = document.getElementById('edit-type');
+const editCategoryInput = document.getElementById('edit-category');
+const editSubcategoryInput = document.getElementById('edit-subcategory');
+const editDescriptionInput = document.getElementById('edit-description');
+const editAmountInput = document.getElementById('edit-amount');
+const editDateInput = document.getElementById('edit-date');
+const editScopeWrap = document.getElementById('edit-scope-wrap');
+const editRecurrenceCountWrap = document.getElementById('edit-recurrence-count-wrap');
+const editRecurrenceCountInput = document.getElementById('edit-recurrence-count');
+const editImpactEl = document.getElementById('edit-impact');
+const cancelEditButton = document.getElementById('edit-cancel');
+
 dateInput.value = new Date().toISOString().slice(0, 10);
 monthFilterInput.value = new Date().toISOString().slice(0, 7);
 
@@ -50,6 +65,20 @@ function saveCategories(categories) {
 
 function normalizeText(value) {
   return value.trim().replace(/\s+/g, ' ');
+}
+
+function sanitizeAmount(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return Number(amount.toFixed(2));
+}
+
+function isValidDateString(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T12:00:00`).getTime());
+}
+
+function createSeriesId() {
+  return `series-${crypto.randomUUID()}`;
 }
 
 function addCategoryAndSubcategory(categoryName, subcategoryName) {
@@ -91,6 +120,15 @@ function syncSubcategoryOptions() {
   subcategoryInput.innerHTML = subs.map((name) => `<option value="${name}">${name}</option>`).join('');
   if (!subcategoryInput.value || !subs.includes(subcategoryInput.value)) {
     subcategoryInput.value = subs[0] || '';
+  }
+}
+
+function syncEditSubcategories() {
+  const categories = loadCategories();
+  const subs = categories[editCategoryInput.value] || [];
+  editSubcategoryInput.innerHTML = subs.map((name) => `<option value="${name}">${name}</option>`).join('');
+  if (!subs.includes(editSubcategoryInput.value)) {
+    editSubcategoryInput.value = subs[0] || '';
   }
 }
 
@@ -157,6 +195,10 @@ function addYears(dateString, offset) {
   const date = new Date(`${dateString}T12:00:00`);
   date.setFullYear(date.getFullYear() + offset);
   return date.toISOString().slice(0, 10);
+}
+
+function getNextDate(dateString, frequency) {
+  return frequency === 'yearly' ? addYears(dateString, 1) : addMonths(dateString, 1);
 }
 
 function migrateLegacyData() {
@@ -401,6 +443,83 @@ function renderMonthlyChart(items) {
   );
 }
 
+function findSeriesItems(items, seriesId) {
+  return items
+    .filter((tx) => tx.recurrence && tx.recurrence.seriesId === seriesId)
+    .sort((a, b) => (a.date > b.date ? 1 : -1));
+}
+
+function recalcSeriesMetadata(items, seriesId) {
+  const seriesItems = findSeriesItems(items, seriesId);
+  if (!seriesItems.length) return;
+
+  const total = seriesItems.length;
+  const startDate = seriesItems[0].date;
+  const baseAmount = seriesItems[0].amount;
+  const frequency = seriesItems[0].recurrence?.frequency || 'monthly';
+
+  seriesItems.forEach((tx, index) => {
+    tx.recurrence = {
+      ...tx.recurrence,
+      seriesId,
+      frequency,
+      sequence: index + 1,
+      total,
+      startDate,
+      baseAmount,
+    };
+  });
+}
+
+function recalcAllSeriesMetadata(items) {
+  const seriesIds = new Set(
+    items
+      .filter((tx) => tx.recurrence && tx.recurrence.seriesId)
+      .map((tx) => tx.recurrence.seriesId),
+  );
+  seriesIds.forEach((seriesId) => recalcSeriesMetadata(items, seriesId));
+}
+
+function migrateRecurringSeriesData(items) {
+  const seriesByLegacyKey = new Map();
+  let changed = false;
+
+  const ordered = [...items].sort((a, b) => {
+    if (a.date === b.date) return (a.id || '').localeCompare(b.id || '');
+    return a.date > b.date ? 1 : -1;
+  });
+
+  ordered.forEach((tx) => {
+    if (!tx.recurrence) return;
+    const frequency = tx.recurrence.frequency === 'yearly' ? 'yearly' : 'monthly';
+    const legacyKey = [
+      frequency,
+      tx.type,
+      tx.category,
+      tx.subcategory,
+      tx.description,
+      tx.recurrence.startDate || tx.date,
+      tx.recurrence.total || '',
+    ].join('|');
+
+    if (!tx.recurrence.seriesId) {
+      if (!seriesByLegacyKey.has(legacyKey)) {
+        seriesByLegacyKey.set(legacyKey, createSeriesId());
+      }
+      tx.recurrence.seriesId = seriesByLegacyKey.get(legacyKey);
+      changed = true;
+    }
+
+    if (!tx.recurrence.frequency || tx.recurrence.frequency !== frequency) {
+      tx.recurrence.frequency = frequency;
+      changed = true;
+    }
+  });
+
+  recalcAllSeriesMetadata(items);
+  return changed;
+}
+
 function renderList(items, month) {
   const filtered = filterByMonth(items, month);
   const sorted = [...filtered].sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -414,7 +533,10 @@ function renderList(items, month) {
           ${tx.recurrence ? '<span class="badge">recorrente</span>' : ''}
           <div class="tx-meta">${tx.type} • ${tx.category} › ${tx.subcategory || 'Outros'} • ${tx.date} • ${formatMoney(tx.amount)}</div>
         </div>
-        <button class="delete-btn" data-id="${tx.id}">Excluir</button>
+        <div class="tx-actions">
+          <button class="edit-btn" data-id="${tx.id}">Editar</button>
+          <button class="delete-btn" data-id="${tx.id}">Excluir</button>
+        </div>
       </li>
     `,
     )
@@ -428,11 +550,20 @@ function renderList(items, month) {
       render();
     });
   });
+
+  txList.querySelectorAll('.edit-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openEditModal(btn.getAttribute('data-id'));
+    });
+  });
 }
 
 function createRecurringTransactions(baseTx, frequency, count) {
   const txs = [];
-  for (let index = 0; index < count; index += 1) {
+  const seriesId = createSeriesId();
+  const total = Math.max(1, Number(count) || 1);
+
+  for (let index = 0; index < total; index += 1) {
     const date =
       frequency === 'yearly' ? addYears(baseTx.date, index) : addMonths(baseTx.date, index);
 
@@ -441,13 +572,187 @@ function createRecurringTransactions(baseTx, frequency, count) {
       id: crypto.randomUUID(),
       date,
       recurrence: {
+        seriesId,
         frequency,
         sequence: index + 1,
-        total: count,
+        total,
+        startDate: baseTx.date,
+        baseAmount: baseTx.amount,
       },
     });
   }
   return txs;
+}
+
+function applyPatch(tx, patch) {
+  const next = { ...tx };
+  if (typeof patch.description === 'string') next.description = normalizeText(patch.description);
+  if (typeof patch.category === 'string') next.category = normalizeText(patch.category);
+  if (typeof patch.subcategory === 'string') next.subcategory = normalizeText(patch.subcategory);
+  if (typeof patch.type === 'string') next.type = patch.type;
+  if (patch.amount !== undefined) {
+    const amount = sanitizeAmount(patch.amount);
+    if (amount !== null) next.amount = amount;
+  }
+  if (typeof patch.date === 'string' && isValidDateString(patch.date)) next.date = patch.date;
+  return next;
+}
+
+function adjustSeriesLength(items, seriesId, desiredTotal, cutoffDate = null) {
+  const seriesItems = findSeriesItems(items, seriesId);
+  if (!seriesItems.length) return;
+
+  const existingTotal = seriesItems.length;
+  const parsedDesired = Number(desiredTotal);
+  if (!Number.isInteger(parsedDesired) || parsedDesired < 1) return;
+
+  const lockedPastCount = cutoffDate ? seriesItems.filter((tx) => tx.date < cutoffDate).length : 0;
+  const targetTotal = Math.max(parsedDesired, lockedPastCount);
+
+  if (targetTotal < existingTotal) {
+    const removable = cutoffDate
+      ? seriesItems.filter((tx) => tx.date >= cutoffDate).sort((a, b) => (a.date < b.date ? 1 : -1))
+      : [...seriesItems].sort((a, b) => (a.date < b.date ? 1 : -1));
+    const removeCount = existingTotal - targetTotal;
+    const idsToRemove = new Set(removable.slice(0, removeCount).map((tx) => tx.id));
+    const kept = items.filter((tx) => !idsToRemove.has(tx.id));
+    items.splice(0, items.length, ...kept);
+    return;
+  }
+
+  if (targetTotal > existingTotal) {
+    let last = seriesItems[seriesItems.length - 1];
+    const frequency = last.recurrence?.frequency || 'monthly';
+    while (findSeriesItems(items, seriesId).length < targetTotal) {
+      const nextTx = {
+        ...last,
+        id: crypto.randomUUID(),
+        date: getNextDate(last.date, frequency),
+        recurrence: {
+          ...last.recurrence,
+          seriesId,
+          frequency,
+        },
+      };
+      items.push(nextTx);
+      last = nextTx;
+    }
+  }
+}
+
+function applyRecurringEdit({ txId, scope, patch, recurrenceCount }) {
+  const all = loadTransactions();
+  const target = all.find((tx) => tx.id === txId);
+  if (!target) return false;
+
+  const isRecurring = !!(target.recurrence && target.recurrence.seriesId);
+  const normalizedScope = isRecurring ? scope : 'single';
+
+  if (normalizedScope === 'single' || !isRecurring) {
+    const index = all.findIndex((tx) => tx.id === txId);
+    all[index] = applyPatch(all[index], patch);
+    saveTransactions(all);
+    return true;
+  }
+
+  const seriesId = target.recurrence.seriesId;
+  const seriesItems = findSeriesItems(all, seriesId);
+  const cutoffDate = target.date;
+  const affectedIds = new Set(
+    (normalizedScope === 'future' ? seriesItems.filter((tx) => tx.date >= cutoffDate) : seriesItems).map((tx) => tx.id),
+  );
+
+  const updated = all.map((tx) => {
+    if (!affectedIds.has(tx.id)) return tx;
+    const scopedPatch = normalizedScope === 'single' ? patch : { ...patch, date: tx.date };
+    return applyPatch(tx, scopedPatch);
+  });
+
+  all.splice(0, all.length, ...updated);
+
+  if (recurrenceCount !== undefined && recurrenceCount !== null && recurrenceCount !== '') {
+    adjustSeriesLength(all, seriesId, recurrenceCount, normalizedScope === 'future' ? cutoffDate : null);
+  }
+
+  recalcSeriesMetadata(all, seriesId);
+  saveTransactions(all);
+  return true;
+}
+
+function estimateRecurringImpact(items, tx, scope, recurrenceCount) {
+  if (!tx || !tx.recurrence || !tx.recurrence.seriesId || scope === 'single') return 'Impacto: 1 lançamento.';
+  const seriesItems = findSeriesItems(items, tx.recurrence.seriesId);
+  const affected = scope === 'future' ? seriesItems.filter((item) => item.date >= tx.date) : seriesItems;
+
+  const parsedCount = Number(recurrenceCount);
+  if (!Number.isInteger(parsedCount) || parsedCount < 1) {
+    return `Impacto estimado: ${affected.length} lançamento(s) alterado(s).`;
+  }
+
+  const lockedPastCount = scope === 'future' ? seriesItems.filter((item) => item.date < tx.date).length : 0;
+  const targetTotal = Math.max(parsedCount, lockedPastCount);
+  const resizedDelta = targetTotal - seriesItems.length;
+
+  if (resizedDelta === 0) {
+    return `Impacto estimado: ${affected.length} lançamento(s) alterado(s), duração inalterada (${seriesItems.length}).`;
+  }
+
+  if (resizedDelta > 0) {
+    return `Impacto estimado: ${affected.length} lançamento(s) alterado(s) e +${resizedDelta} nova(s) ocorrência(s).`;
+  }
+
+  return `Impacto estimado: ${affected.length} lançamento(s) alterado(s) e ${Math.abs(resizedDelta)} ocorrência(s) futura(s) removida(s).`;
+}
+
+function openEditModal(txId) {
+  const items = loadTransactions();
+  const tx = items.find((item) => item.id === txId);
+  if (!tx) return;
+
+  const categories = loadCategories();
+  const categoryNames = Object.keys(categories).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  editCategoryInput.innerHTML = categoryNames.map((name) => `<option value="${name}">${name}</option>`).join('');
+
+  editTxIdInput.value = tx.id;
+  editTypeInput.value = tx.type;
+  editCategoryInput.value = tx.category;
+  syncEditSubcategories();
+  editSubcategoryInput.value = tx.subcategory;
+  editDescriptionInput.value = tx.description;
+  editAmountInput.value = tx.amount;
+  editDateInput.value = tx.date;
+
+  const isRecurring = !!(tx.recurrence && tx.recurrence.seriesId);
+  editScopeWrap.classList.toggle('hidden', !isRecurring);
+  editRecurrenceCountWrap.classList.toggle('hidden', !isRecurring);
+  editRecurrenceCountInput.value = isRecurring ? tx.recurrence.total : '';
+
+  const defaultScope = isRecurring ? 'single' : 'single';
+  editForm.querySelectorAll('input[name="edit-scope"]').forEach((radio) => {
+    radio.checked = radio.value === defaultScope;
+    radio.disabled = !isRecurring;
+  });
+
+  editImpactEl.textContent = estimateRecurringImpact(items, tx, defaultScope, editRecurrenceCountInput.value);
+  editModal.classList.remove('hidden');
+}
+
+function closeEditModal() {
+  editModal.classList.add('hidden');
+  editForm.reset();
+}
+
+function getSelectedEditScope() {
+  const selected = editForm.querySelector('input[name="edit-scope"]:checked');
+  return selected ? selected.value : 'single';
+}
+
+function refreshEditImpact() {
+  const items = loadTransactions();
+  const tx = items.find((item) => item.id === editTxIdInput.value);
+  if (!tx) return;
+  const scope = getSelectedEditScope();
+  editImpactEl.textContent = estimateRecurringImpact(items, tx, scope, editRecurrenceCountInput.value);
 }
 
 function render() {
@@ -497,6 +802,38 @@ recurringCheckbox.addEventListener('change', () => {
 
 monthFilterInput.addEventListener('change', render);
 
+editCategoryInput.addEventListener('change', () => {
+  syncEditSubcategories();
+  refreshEditImpact();
+});
+editForm.querySelectorAll('input[name="edit-scope"]').forEach((radio) => {
+  radio.addEventListener('change', refreshEditImpact);
+});
+editRecurrenceCountInput.addEventListener('input', refreshEditImpact);
+cancelEditButton.addEventListener('click', closeEditModal);
+
+editForm.addEventListener('submit', (ev) => {
+  ev.preventDefault();
+
+  const txId = editTxIdInput.value;
+  const scope = getSelectedEditScope();
+  const patch = {
+    type: editTypeInput.value,
+    category: editCategoryInput.value,
+    subcategory: editSubcategoryInput.value,
+    description: editDescriptionInput.value,
+    amount: editAmountInput.value,
+    date: editDateInput.value,
+  };
+
+  if (!normalizeText(patch.description) || !sanitizeAmount(patch.amount) || !isValidDateString(patch.date)) return;
+
+  const recurrenceCount = editRecurrenceCountInput.value ? Number(editRecurrenceCountInput.value) : undefined;
+  applyRecurringEdit({ txId, scope, patch, recurrenceCount });
+  closeEditModal();
+  render();
+});
+
 form.addEventListener('submit', (ev) => {
   ev.preventDefault();
   const baseTx = {
@@ -504,12 +841,12 @@ form.addEventListener('submit', (ev) => {
     category: normalizeText(categoryInput.value),
     subcategory: normalizeText(subcategoryInput.value),
     description: normalizeText(document.getElementById('description').value),
-    amount: Number(document.getElementById('amount').value),
+    amount: sanitizeAmount(document.getElementById('amount').value),
     date: document.getElementById('date').value,
     recurrence: null,
   };
 
-  if (!baseTx.description || !baseTx.amount || !baseTx.date || !baseTx.category || !baseTx.subcategory) return;
+  if (!baseTx.description || !baseTx.amount || !isValidDateString(baseTx.date) || !baseTx.category || !baseTx.subcategory) return;
 
   const all = loadTransactions();
   if (recurringCheckbox.checked) {
@@ -541,5 +878,9 @@ if ('serviceWorker' in navigator) {
 }
 
 migrateLegacyData();
+const txs = loadTransactions();
+if (migrateRecurringSeriesData(txs)) {
+  saveTransactions(txs);
+}
 syncCategoryOptions();
 render();

@@ -148,6 +148,71 @@
       </section>
     </main>
 
+
+
+    <div id="edit-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="edit-title">
+      <div class="modal-content">
+        <h2 id="edit-title">Editar lançamento</h2>
+        <form id="edit-form">
+          <input id="edit-tx-id" type="hidden" />
+
+          <label>
+            Tipo
+            <select id="edit-type" required>
+              <option value="income">Receita</option>
+              <option value="expense">Despesa</option>
+              <option value="investment">Investimento</option>
+              <option value="goal">Meta</option>
+            </select>
+          </label>
+
+          <label>
+            Categoria
+            <select id="edit-category" required></select>
+          </label>
+
+          <label>
+            Subcategoria
+            <select id="edit-subcategory" required></select>
+          </label>
+
+          <label>
+            Descrição
+            <input id="edit-description" required maxlength="120" />
+          </label>
+
+          <label>
+            Valor
+            <input id="edit-amount" type="number" min="0.01" step="0.01" required />
+          </label>
+
+          <label>
+            Data
+            <input id="edit-date" type="date" required />
+          </label>
+
+          <fieldset id="edit-scope-wrap" class="modal-scope hidden">
+            <legend>Aplicar alterações em:</legend>
+            <label class="inline"><input type="radio" name="edit-scope" value="single" checked /> Apenas esta ocorrência</label>
+            <label class="inline"><input type="radio" name="edit-scope" value="future" /> Esta e próximas</label>
+            <label class="inline"><input type="radio" name="edit-scope" value="all" /> Toda a série</label>
+          </fieldset>
+
+          <label id="edit-recurrence-count-wrap" class="hidden">
+            Nova duração da recorrência (ocorrências)
+            <input id="edit-recurrence-count" type="number" min="1" max="120" />
+          </label>
+
+          <p id="edit-impact" class="modal-impact"></p>
+
+          <div class="modal-actions">
+            <button id="edit-cancel" type="button" class="secondary-btn">Cancelar</button>
+            <button type="submit">Salvar edição</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <script src="./assets/js/app.js"></script>
   </body>
 </html>
