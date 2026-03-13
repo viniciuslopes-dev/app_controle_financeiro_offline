@@ -12,6 +12,11 @@
 }
 
 * { box-sizing: border-box; }
+html, body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
 body {
   margin: 0;
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
@@ -258,3 +263,32 @@ button {
 }
 
 .modal.hidden { display: none; }
+
+@media (max-width: 640px) {
+  .nested-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .category-list li {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .delete-category-btn {
+    align-self: flex-end;
+  }
+
+  .bar-row {
+    grid-template-columns: 1fr;
+    gap: .25rem;
+  }
+
+  .tx-item {
+    grid-template-columns: 1fr;
+  }
+
+  .tx-actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+}
