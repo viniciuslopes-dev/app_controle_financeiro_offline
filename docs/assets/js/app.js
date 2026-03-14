@@ -487,13 +487,17 @@ function filterByMonthAndType(items, month, type) {
   return filterByType(monthItems, type);
 }
 
-function getSummaryDelta(current, previous) {
+function getSummaryDelta(current, previous, invertColors = false) {
   if (previous === 0 && current === 0) return { text: '', className: 'summary-delta--neutral' };
   const diff = current - previous;
   const pct = previous > 0 ? (diff / previous) * 100 : null;
   const arrow = diff > 0 ? '\u25B2' : diff < 0 ? '\u25BC' : '';
   const pctText = pct !== null ? ` ${pct >= 0 ? '+' : ''}${formatPercent(pct)}%` : '';
-  const className = diff > 0 ? 'summary-delta--up' : diff < 0 ? 'summary-delta--down' : 'summary-delta--neutral';
+  const isUp = diff > 0;
+  const isDown = diff < 0;
+  const goodClass = invertColors ? 'summary-delta--down' : 'summary-delta--up';
+  const badClass = invertColors ? 'summary-delta--up' : 'summary-delta--down';
+  const className = isUp ? badClass : isDown ? goodClass : 'summary-delta--neutral';
   return { text: `${arrow} ${formatMoney(Math.abs(diff))}${pctText}`, className };
 }
 
@@ -508,17 +512,17 @@ function renderSummary(items, month) {
   const prevTotalDiscounted = p.expense + p.investment + p.goal;
 
   const rows = [
-    ['Receitas', s.income, p.income, 'summary-item--income'],
-    ['Despesas', s.expense, p.expense, 'summary-item--expense'],
-    ['Investimentos', s.investment, p.investment, 'summary-item--investment'],
-    ['Metas', s.goal, p.goal, 'summary-item--goal'],
-    ['Total descontado', totalDiscounted, prevTotalDiscounted, 'summary-item--discounted'],
-    ['Saldo', s.balance, p.balance, s.balance >= 0 ? 'summary-item--balance-positive' : 'summary-item--balance-negative'],
+    ['Receitas', s.income, p.income, 'summary-item--income', false],
+    ['Despesas', s.expense, p.expense, 'summary-item--expense', true],
+    ['Investimentos', s.investment, p.investment, 'summary-item--investment', false],
+    ['Metas', s.goal, p.goal, 'summary-item--goal', false],
+    ['Total descontado', totalDiscounted, prevTotalDiscounted, 'summary-item--discounted', true],
+    ['Saldo', s.balance, p.balance, s.balance >= 0 ? 'summary-item--balance-positive' : 'summary-item--balance-negative', false],
   ];
 
   summaryEl.innerHTML = rows
-    .map(([label, value, prevValue, modifier]) => {
-      const delta = prevMonth ? getSummaryDelta(value, prevValue) : null;
+    .map(([label, value, prevValue, modifier, invertColors]) => {
+      const delta = prevMonth ? getSummaryDelta(value, prevValue, invertColors) : null;
       const deltaHtml = delta && delta.text ? `<span class="summary-delta ${delta.className}">${delta.text}</span>` : '';
       return `
       <div class="summary-item ${modifier}">
