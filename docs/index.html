@@ -33,6 +33,33 @@
 
       <section class="card">
         <h2>Novo lançamento</h2>
+        <section id="quick-entry" class="quick-entry" aria-label="Lançamento rápido">
+          <h3>Lançamento rápido</h3>
+
+          <div class="quick-type-buttons" role="group" aria-label="Tipo de lançamento">
+            <button type="button" class="quick-type-btn" data-type="expense">Despesa</button>
+            <button type="button" class="quick-type-btn" data-type="income">Receita</button>
+            <button type="button" class="quick-type-btn" data-type="investment">Investimento</button>
+            <button type="button" class="quick-type-btn" data-type="goal">Meta</button>
+          </div>
+
+          <div id="quick-category-grid" class="quick-category-grid" aria-label="Categorias"></div>
+          <div id="quick-subcategory-grid" class="quick-subcategory-grid" aria-label="Subcategorias"></div>
+
+          <div class="quick-inputs">
+            <label>
+              Valor rápido
+              <input id="quick-amount" type="number" min="0" step="0.01" placeholder="0,00" />
+            </label>
+            <label>
+              Data
+              <input id="quick-date" type="date" />
+            </label>
+          </div>
+
+          <button id="quick-save" type="button" class="quick-save-btn">Salvar rápido</button>
+        </section>
+
         <form id="tx-form">
           <label>
             Tipo
