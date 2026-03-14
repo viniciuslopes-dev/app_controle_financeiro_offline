@@ -3,6 +3,8 @@ const LEGACY_STORAGE_KEY = 'finance_offline_transactions_v1';
 const CATEGORY_STORAGE_KEY = 'finance_offline_categories_v1';
 const SESSION_STORAGE_KEY = 'finance_offline_session_v1';
 const REMOTE_BACKUP_STORAGE_PREFIX = 'finance_offline_remote_backup_v1:';
+const SAFETY_SNAPSHOT_STORAGE_KEY = 'finance_offline_safety_snapshots_v1';
+const DEVICE_ID_STORAGE_KEY = 'finance_offline_device_id_v1';
 
 const DEFAULT_CATEGORIES = {
   Moradia: ['Aluguel', 'Luz', 'Água', 'Internet'],
@@ -222,6 +224,47 @@ function saveCategories(categories) {
 
 function normalizeText(value) {
   return value.trim().replace(/\s+/g, ' ');
+}
+
+function getDeviceId() {
+  const stored = normalizeText(String(localStorage.getItem(DEVICE_ID_STORAGE_KEY) || ''));
+  if (stored) return stored;
+
+  const created = `device-${crypto.randomUUID()}`;
+  localStorage.setItem(DEVICE_ID_STORAGE_KEY, created);
+  return created;
+}
+
+function nowIsoString() {
+  return new Date().toISOString();
+}
+
+function parseTimestamp(value) {
+  if (typeof value !== 'string') return null;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function createSafetySnapshot(reason = 'manual') {
+  const payload = buildBackupPayload();
+  const snapshot = {
+    id: `snapshot-${crypto.randomUUID()}`,
+    reason,
+    createdAt: nowIsoString(),
+    payload,
+  };
+
+  let history = [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SAFETY_SNAPSHOT_STORAGE_KEY) || '[]');
+    if (Array.isArray(parsed)) history = parsed;
+  } catch {
+    history = [];
+  }
+
+  history.push(snapshot);
+  localStorage.setItem(SAFETY_SNAPSHOT_STORAGE_KEY, JSON.stringify(history.slice(-10)));
+  return snapshot;
 }
 
 function sanitizeAmount(value) {
@@ -444,17 +487,41 @@ function migrateLegacyData() {
 
 function loadTransactions() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    return Array.isArray(parsed)
+      ? parsed.map((tx) => sanitizeTransaction(tx, { keepUpdatedAt: true })).filter(Boolean)
+      : [];
   } catch {
     return [];
   }
 }
 
 function saveTransactions(items) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  const existing = loadTransactions();
+  const existingById = new Map(existing.map((tx) => [tx.id, tx]));
+  const sanitized = Array.isArray(items)
+    ? items
+      .map((item) => sanitizeTransaction(item, { keepUpdatedAt: true }))
+      .filter(Boolean)
+      .map((tx) => {
+        const previous = existingById.get(tx.id);
+        const isSameData = previous
+          && JSON.stringify(normalizeTransactionComparable(previous)) === JSON.stringify(normalizeTransactionComparable(tx));
+
+        return {
+          ...tx,
+          updatedAt: isSameData && typeof previous.updatedAt === 'string' ? previous.updatedAt : nowIsoString(),
+          deviceId: isSameData
+            ? (previous && previous.deviceId ? previous.deviceId : (tx.deviceId || getDeviceId()))
+            : getDeviceId(),
+        };
+      })
+    : [];
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
 }
 
-function sanitizeTransaction(tx) {
+function sanitizeTransaction(tx, options = {}) {
   if (!tx || typeof tx !== 'object') return null;
 
   const description = normalizeText(String(tx.description || ''));
@@ -466,6 +533,7 @@ function sanitizeTransaction(tx) {
 
   const category = normalizeText(String(tx.category || FALLBACK_CATEGORY)) || FALLBACK_CATEGORY;
   const subcategory = normalizeText(String(tx.subcategory || FALLBACK_SUBCATEGORY)) || FALLBACK_SUBCATEGORY;
+  const keepUpdatedAt = !!options.keepUpdatedAt;
 
   return {
     id: typeof tx.id === 'string' && tx.id ? tx.id : crypto.randomUUID(),
@@ -476,6 +544,8 @@ function sanitizeTransaction(tx) {
     amount,
     date,
     recurrence: tx.recurrence && typeof tx.recurrence === 'object' ? tx.recurrence : null,
+    updatedAt: keepUpdatedAt ? (typeof tx.updatedAt === 'string' ? tx.updatedAt : nowIsoString()) : nowIsoString(),
+    ...(typeof tx.deviceId === 'string' && normalizeText(tx.deviceId) ? { deviceId: normalizeText(tx.deviceId) } : (keepUpdatedAt ? {} : { deviceId: getDeviceId() })),
   };
 }
 
@@ -592,9 +662,9 @@ function normalizeImportedCategories(categories) {
   return normalized;
 }
 
-function applyBackupPayload(payload) {
+function applyBackupPayload(payload, options = {}) {
   const categories = normalizeImportedCategories(payload.categories || {});
-  const transactions = payload.transactions.map((tx) => sanitizeTransaction(tx)).filter(Boolean);
+  const transactions = payload.transactions.map((tx) => sanitizeTransaction(tx, { keepUpdatedAt: true })).filter(Boolean);
 
   transactions.forEach((tx) => {
     if (!categories[tx.category]) categories[tx.category] = [];
@@ -607,6 +677,10 @@ function applyBackupPayload(payload) {
     return { ok: false, message: 'Nenhum lançamento válido foi encontrado no backup.' };
   }
 
+  if (options.createSnapshot !== false) {
+    createSafetySnapshot(options.snapshotReason || 'before-apply-backup');
+  }
+
   if (migrateRecurringSeriesData(transactions)) {
     recalcAllSeriesMetadata(transactions);
   }
@@ -617,6 +691,89 @@ function applyBackupPayload(payload) {
   render();
 
   return { ok: true, importedCount: transactions.length };
+}
+
+function normalizeTransactionComparable(tx) {
+  return {
+    id: tx.id,
+    type: tx.type,
+    category: tx.category,
+    subcategory: tx.subcategory,
+    description: tx.description,
+    amount: tx.amount,
+    date: tx.date,
+    recurrence: tx.recurrence || null,
+  };
+}
+
+function mergeTransactions(localTxs, remoteTxs) {
+  const localMap = new Map(
+    (Array.isArray(localTxs) ? localTxs : [])
+      .map((tx) => sanitizeTransaction(tx, { keepUpdatedAt: true }))
+      .filter(Boolean)
+      .map((tx) => [tx.id, tx]),
+  );
+  const remoteMap = new Map(
+    (Array.isArray(remoteTxs) ? remoteTxs : [])
+      .map((tx) => sanitizeTransaction(tx, { keepUpdatedAt: true }))
+      .filter(Boolean)
+      .map((tx) => [tx.id, tx]),
+  );
+
+  const allIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
+  const merged = [];
+  const summary = { kept: 0, imported: 0, conflicting: 0 };
+  const conflicts = [];
+
+  allIds.forEach((id) => {
+    const localTx = localMap.get(id);
+    const remoteTx = remoteMap.get(id);
+
+    if (!localTx && remoteTx) {
+      merged.push(remoteTx);
+      summary.imported += 1;
+      return;
+    }
+
+    if (localTx && !remoteTx) {
+      merged.push(localTx);
+      summary.kept += 1;
+      return;
+    }
+
+    const localStamp = parseTimestamp(localTx.updatedAt) || 0;
+    const remoteStamp = parseTimestamp(remoteTx.updatedAt) || 0;
+    const sameData = JSON.stringify(normalizeTransactionComparable(localTx)) === JSON.stringify(normalizeTransactionComparable(remoteTx));
+
+    if (sameData) {
+      merged.push(localStamp >= remoteStamp ? localTx : remoteTx);
+      summary.kept += 1;
+      return;
+    }
+
+    if (localStamp === remoteStamp) {
+      summary.conflicting += 1;
+      conflicts.push({
+        id,
+        local: localTx,
+        remote: remoteTx,
+      });
+      merged.push(localTx);
+      summary.kept += 1;
+      return;
+    }
+
+    if (remoteStamp > localStamp) {
+      merged.push(remoteTx);
+      summary.imported += 1;
+      return;
+    }
+
+    merged.push(localTx);
+    summary.kept += 1;
+  });
+
+  return { transactions: merged, summary, conflicts };
 }
 
 function mergeBackupPayloads(localPayload, remotePayload) {
@@ -643,22 +800,26 @@ function mergeBackupPayloads(localPayload, remotePayload) {
     }
   });
 
-  const mergedMap = new Map();
-  [...(localPayload.transactions || []), ...(remotePayload.transactions || [])]
-    .map((tx) => sanitizeTransaction(tx))
-    .filter(Boolean)
-    .forEach((tx) => {
-      mergedMap.set(tx.id, tx);
-      if (!categories[tx.category]) categories[tx.category] = [];
-      if (!categories[tx.category].includes(tx.subcategory)) categories[tx.category].push(tx.subcategory);
-    });
+  const mergedTxResult = mergeTransactions(localPayload.transactions || [], remotePayload.transactions || []);
+  mergedTxResult.transactions.forEach((tx) => {
+    if (!categories[tx.category]) categories[tx.category] = [];
+    if (!categories[tx.category].includes(tx.subcategory)) categories[tx.category].push(tx.subcategory);
+  });
 
   return {
-    version: '1.0',
-    exportedAt: new Date().toISOString(),
-    transactions: Array.from(mergedMap.values()),
-    categories,
+    payload: {
+      version: '1.0',
+      exportedAt: nowIsoString(),
+      transactions: mergedTxResult.transactions,
+      categories,
+    },
+    summary: mergedTxResult.summary,
+    conflicts: mergedTxResult.conflicts,
   };
+}
+
+function formatSyncSummary(summary) {
+  return `Sincronização concluída: ${summary.kept} mantido(s), ${summary.imported} importado(s), ${summary.conflicting} conflitante(s).`;
 }
 
 function importBackupPayload(payload) {
@@ -666,7 +827,7 @@ function importBackupPayload(payload) {
     return { ok: false, cancelled: true };
   }
 
-  return applyBackupPayload(payload);
+  return applyBackupPayload(payload, { createSnapshot: true, snapshotReason: 'before-manual-import' });
 }
 
 async function handleRemoteBackupOnSignIn(userId) {
@@ -684,45 +845,42 @@ async function handleRemoteBackupOnSignIn(userId) {
     return;
   }
 
-  const remoteDate = remoteResult.savedAt ? `\nÚltimo backup remoto: ${new Date(remoteResult.savedAt).toLocaleString('pt-BR')}` : '';
-  const choice = window.prompt(
-    `Encontramos um backup salvo nesta conta.${remoteDate}\n\nEscolha como continuar:\n1 - Usar dados locais\n2 - Restaurar backup da conta\n3 - Mesclar local + conta`,
-    '1',
-  );
+  const localPayload = buildBackupPayload();
+  const mergedResult = mergeBackupPayloads(localPayload, remoteResult.payload);
 
-  const normalizedChoice = String(choice || '1').trim();
-  if (normalizedChoice === '2') {
-    const applyResult = applyBackupPayload(remoteResult.payload);
-    if (!applyResult.ok) {
-      window.alert(applyResult.message || 'Não foi possível restaurar o backup da conta.');
+  if (mergedResult.conflicts.length) {
+    const preview = mergedResult.conflicts
+      .slice(0, 5)
+      .map((conflict) => `• ID ${conflict.id}: local(${conflict.local.updatedAt}) x remoto(${conflict.remote.updatedAt})`)
+      .join('\n');
+
+    const confirmed = window.confirm(
+      `Foram detectados ${mergedResult.conflicts.length} conflito(s) real(is) de atualização.\n\n${preview}${mergedResult.conflicts.length > 5 ? '\n• ...' : ''}\n\nContinuar aplicando a mescla automática (mais recente vence)?`,
+    );
+
+    if (!confirmed) {
+      window.alert('Sincronização cancelada. Nenhuma alteração foi aplicada.');
       return;
     }
-    window.alert(`Backup da conta restaurado com sucesso (${applyResult.importedCount} lançamento(s)).`);
+  }
+
+  const applyResult = applyBackupPayload(mergedResult.payload, {
+    createSnapshot: true,
+    snapshotReason: 'before-signin-sync-merge',
+  });
+
+  if (!applyResult.ok) {
+    window.alert(applyResult.message || 'Não foi possível sincronizar os dados local + conta.');
     return;
   }
 
-  if (normalizedChoice === '3') {
-    const mergedPayload = mergeBackupPayloads(buildBackupPayload(), remoteResult.payload);
-    const applyResult = applyBackupPayload(mergedPayload);
-    if (!applyResult.ok) {
-      window.alert(applyResult.message || 'Não foi possível mesclar os dados local + conta.');
-      return;
-    }
-
-    const uploadResult = await uploadBackupForUser(userId, mergedPayload);
-    if (!uploadResult.ok) {
-      window.alert(uploadResult.message || 'Mescla aplicada localmente, mas falhou ao atualizar backup remoto.');
-      return;
-    }
-
-    window.alert(`Mescla concluída com sucesso (${applyResult.importedCount} lançamento(s)).`);
-    return;
-  }
-
-  const uploadResult = await uploadBackupForUser(userId, buildBackupPayload());
+  const uploadResult = await uploadBackupForUser(userId, mergedResult.payload);
   if (!uploadResult.ok) {
-    window.alert(uploadResult.message || 'Você manteve os dados locais, mas não foi possível atualizá-los na conta.');
+    window.alert(`${formatSyncSummary(mergedResult.summary)}\n\nA aplicação local funcionou, mas falhou ao atualizar backup remoto.`);
+    return;
   }
+
+  window.alert(formatSyncSummary(mergedResult.summary));
 }
 
 function formatMoney(value) {
