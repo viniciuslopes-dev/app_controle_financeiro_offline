@@ -22,6 +22,8 @@ const inflowOutflowChartEl = document.getElementById('inflow-outflow-chart');
 const categoryChartEl = document.getElementById('category-chart');
 const subcategoryChartEl = document.getElementById('subcategory-chart');
 const monthlyChartEl = document.getElementById('monthly-chart');
+const monthlyTrendChartEl = document.getElementById('monthly-trend-chart');
+const dashboardInsightsEl = document.getElementById('dashboard-insights');
 const dateInput = document.getElementById('date');
 const monthFilterInput = document.getElementById('month-filter');
 const categoryInput = document.getElementById('category');
@@ -428,6 +430,10 @@ function formatDateBR(value) {
   return `${day}/${month}/${year}`;
 }
 
+function formatPercent(value, digits = 1) {
+  return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
+}
+
 function computeSummary(items) {
   const totals = { income: 0, expense: 0, investment: 0, goal: 0 };
   for (const tx of items) totals[tx.type] += tx.amount;
@@ -437,6 +443,14 @@ function computeSummary(items) {
 
 function getCurrentMonthFilter() {
   return monthFilterInput.value;
+}
+
+function getPreviousMonth(month) {
+  if (!/^\d{4}-\d{2}$/.test(month || '')) return null;
+
+  const [year, monthNumber] = month.split('-').map(Number);
+  const previous = new Date(year, monthNumber - 2, 1);
+  return `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function filterByMonth(items, month) {
@@ -504,7 +518,15 @@ function renderBars(
   emptyMessage = 'Sem dados para o período selecionado.',
   options = {},
 ) {
-  const { summaryLabel = 'Total', summaryValue, tone = 'default' } = options;
+  const {
+    summaryLabel = 'Total',
+    summaryValue,
+    tone = 'default',
+    showPercent = true,
+    scaleMode = 'max',
+    insightText = '',
+    delta,
+  } = options;
 
   if (!rows.length) {
     container.innerHTML = `<p class="empty">${emptyMessage}</p>`;
@@ -514,19 +536,53 @@ function renderBars(
   const total = rows.reduce((acc, row) => acc + row.value, 0);
   const headerValue = summaryValue === undefined || summaryValue === null ? total : summaryValue;
   const maxValue = Math.max(...rows.map((r) => r.value), 1);
-  container.innerHTML = `<p class="chart-total">${summaryLabel}: <strong>${formatMoney(headerValue)}</strong></p>` + rows
+  const deltaClass = !delta || delta.percent === null
+    ? 'chart-delta--neutral'
+    : delta.percent > 0
+      ? 'chart-delta--positive'
+      : delta.percent < 0
+        ? 'chart-delta--negative'
+        : 'chart-delta--neutral';
+  const deltaText = !delta
+    ? ''
+    : ` <span class="chart-delta ${deltaClass}">(${delta.absoluteLabel} | ${delta.percentLabel})</span>`;
+
+  container.innerHTML = `<p class="chart-total">${summaryLabel}: <strong>${formatMoney(headerValue)}</strong>${deltaText}</p>${insightText ? `<p class="chart-insight">${insightText}</p>` : ''}` + rows
     .map((row) => {
-      const width = Math.max((row.value / maxValue) * 100, 2);
+      const widthBase = scaleMode === 'total' ? total : maxValue;
+      const rawWidth = widthBase > 0 ? (row.value / widthBase) * 100 : 0;
+      const width = row.value > 0 ? Math.max(rawWidth, 2) : 0;
+      const pct = total > 0 ? (row.value / total) * 100 : 0;
       const rowTone = row.tone || tone;
       return `
         <div class="bar-row">
           <small>${row.label}</small>
           <div class="bar bar-${rowTone}"><span style="width:${width}%"></span></div>
-          <strong>${formatMoney(row.value)}</strong>
+          <strong class="bar-value">${formatMoney(row.value)}</strong>
+          <small class="bar-percent">${showPercent ? `${formatPercent(pct)}%` : ''}</small>
         </div>
       `;
     })
     .join('');
+}
+
+function getMonthOverMonthDelta(items, selectedMonth, type) {
+  if (!selectedMonth) return null;
+
+  const previousMonth = getPreviousMonth(selectedMonth);
+  if (!previousMonth) return null;
+
+  const currentTotal = filterByMonthAndType(items, selectedMonth, type).reduce((acc, tx) => acc + tx.amount, 0);
+  const previousTotal = filterByMonthAndType(items, previousMonth, type).reduce((acc, tx) => acc + tx.amount, 0);
+  const absolute = currentTotal - previousTotal;
+  const percent = previousTotal > 0 ? (absolute / previousTotal) * 100 : null;
+
+  return {
+    absolute,
+    percent,
+    absoluteLabel: `${absolute >= 0 ? '+' : '-'}${formatMoney(Math.abs(absolute))}`,
+    percentLabel: percent === null ? 'sem base no mês anterior' : `${percent >= 0 ? '+' : ''}${formatPercent(percent)}%`,
+  };
 }
 
 function renderInflowOutflowChart(items, month) {
@@ -546,6 +602,7 @@ function renderInflowOutflowChart(items, month) {
   renderBars(inflowOutflowChartEl, rows, 'Sem dados de entradas e saídas para o período selecionado.', {
     summaryLabel: 'Diferença (Entradas - Saídas)',
     summaryValue: netFlow,
+    scaleMode: 'total',
   });
 }
 
@@ -560,7 +617,9 @@ function renderTypeCompositionChart(items, month) {
     .map(([type, value]) => ({ label: getTypeLabel(type), value }))
     .sort((a, b) => b.value - a.value);
 
-  renderBars(typeCompositionChartEl, rows, 'Sem despesas, investimentos ou metas para o período selecionado.');
+  renderBars(typeCompositionChartEl, rows, 'Sem despesas, investimentos ou metas para o período selecionado.', {
+    scaleMode: 'total',
+  });
 }
 
 function renderCategoryChart(items, month) {
@@ -576,11 +635,12 @@ function renderCategoryChart(items, month) {
     .sort((a, b) => b.value - a.value);
 
   const tone = selectedType === 'income' ? 'income' : selectedType === 'all' ? 'default' : 'outflow';
+  const delta = getMonthOverMonthDelta(items, month, selectedType);
   renderBars(
     categoryChartEl,
     rows,
     `Sem lançamentos de ${getTypeLabel(selectedType).toLowerCase()} para este filtro.`,
-    { tone },
+    { tone, scaleMode: 'total', delta },
   );
 }
 
@@ -607,12 +667,11 @@ function renderSubcategoryChart(items, month) {
     subcategoryChartEl,
     rows,
     `Sem subcategorias para ${getTypeLabel(selectedType).toLowerCase()} neste filtro.`,
-    { tone },
+    { tone, scaleMode: 'total' },
   );
 }
 
-function renderMonthlyChart(items) {
-  const selectedType = reportTypeFilter.value;
+function buildMonthlyRows(items, selectedType) {
   const filteredByType = filterByType(items, selectedType);
   const monthly = filteredByType.reduce((acc, tx) => {
     const month = tx.date.slice(0, 7);
@@ -620,10 +679,62 @@ function renderMonthlyChart(items) {
     return acc;
   }, {});
 
-  const rows = Object.entries(monthly)
+  return Object.entries(monthly)
     .map(([label, value]) => ({ label, value }))
     .sort((a, b) => (a.label > b.label ? 1 : -1))
     .slice(-12);
+}
+
+function getMovingAverageRows(rows, windowSize = 3) {
+  return rows.map((row, index) => {
+    const start = Math.max(0, index - (windowSize - 1));
+    const set = rows.slice(start, index + 1);
+    const avg = set.reduce((acc, item) => acc + item.value, 0) / set.length;
+    return { label: row.label, value: avg };
+  });
+}
+
+function buildSparklinePath(rows, width, height, padding = 10) {
+  if (!rows.length) return '';
+  const values = rows.map((row) => row.value);
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const range = max - min || 1;
+  const innerWidth = width - padding * 2;
+  const innerHeight = height - padding * 2;
+
+  return rows
+    .map((row, index) => {
+      const x = padding + (rows.length > 1 ? (index / (rows.length - 1)) * innerWidth : innerWidth / 2);
+      const normalized = (row.value - min) / range;
+      const y = padding + (1 - normalized) * innerHeight;
+      return `${index === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(' ');
+}
+
+function renderMonthlyTrendChart(rows, tone = 'default') {
+  if (!monthlyTrendChartEl) return;
+  if (!rows.length) {
+    monthlyTrendChartEl.innerHTML = '<p>Sem dados suficientes para tendência.</p>';
+    return;
+  }
+
+  const maRows = getMovingAverageRows(rows, 3);
+  const stroke = tone === 'income' ? '#16a34a' : tone === 'outflow' ? '#dc2626' : '#2563eb';
+  const path = buildSparklinePath(maRows, 680, 120, 14);
+
+  monthlyTrendChartEl.innerHTML = `
+    <svg viewBox="0 0 680 120" role="img" aria-label="Tendência mensal por média móvel de 3 meses">
+      <path d="${path}" fill="none" stroke="${stroke}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>
+    </svg>
+    <p>Barras = valor mensal • Linha = média móvel (3 meses)</p>
+  `;
+}
+
+function renderMonthlyChart(items) {
+  const selectedType = reportTypeFilter.value;
+  const rows = buildMonthlyRows(items, selectedType);
 
   const average = rows.length ? rows.reduce((acc, row) => acc + row.value, 0) / rows.length : 0;
   const tone = selectedType === 'income' ? 'income' : selectedType === 'all' ? 'default' : 'outflow';
@@ -634,6 +745,56 @@ function renderMonthlyChart(items) {
     `Sem evolução mensal para ${getTypeLabel(selectedType).toLowerCase()} no período.`,
     { summaryLabel: 'Média mensal', summaryValue: average, tone },
   );
+
+  renderMonthlyTrendChart(rows, tone);
+}
+
+function getConcentrationStatus(value) {
+  if (value >= 60) return { label: 'Alto', className: 'badge-status--high' };
+  if (value >= 40) return { label: 'Atenção', className: 'badge-status--attention' };
+  return { label: 'Normal', className: 'badge-status--normal' };
+}
+
+function renderDashboardInsights(items, month) {
+  if (!dashboardInsightsEl) return;
+
+  const monthItems = filterByMonth(items, month).filter((tx) => tx.type !== 'income');
+  if (!monthItems.length) {
+    dashboardInsightsEl.innerHTML = '<p class="empty">Sem insights para o período selecionado.</p>';
+    return;
+  }
+
+  const byCategory = monthItems.reduce((acc, tx) => {
+    acc[tx.category] = (acc[tx.category] || 0) + tx.amount;
+    return acc;
+  }, {});
+  const rows = Object.entries(byCategory)
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value);
+
+  const total = rows.reduce((acc, row) => acc + row.value, 0);
+  const top1 = rows[0];
+  const top1Pct = total > 0 ? (top1.value / total) * 100 : 0;
+  const top3Value = rows.slice(0, 3).reduce((acc, row) => acc + row.value, 0);
+  const top3Pct = total > 0 ? (top3Value / total) * 100 : 0;
+  const status = getConcentrationStatus(top1Pct);
+
+  dashboardInsightsEl.innerHTML = `
+    <div class="dashboard-insight-item">
+      <div>
+        <small>Maior categoria de saída</small>
+        <strong>${top1.label}: ${formatPercent(top1Pct)}%</strong>
+      </div>
+      <span class="badge-status ${status.className}">${status.label}</span>
+    </div>
+    <div class="dashboard-insight-item">
+      <div>
+        <small>Concentração Top 3 categorias</small>
+        <strong>${formatPercent(top3Pct)}% das saídas do mês</strong>
+      </div>
+      <span class="badge-status badge-status--normal">Info</span>
+    </div>
+  `;
 }
 
 function findSeriesItems(items, seriesId) {
@@ -1112,6 +1273,7 @@ function render() {
   renderCategoryChart(txs, selectedMonth);
   renderSubcategoryChart(txs, selectedMonth);
   renderMonthlyChart(txs);
+  renderDashboardInsights(txs, selectedMonth);
   renderList(txs, selectedMonth);
 }
 
