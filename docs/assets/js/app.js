@@ -568,6 +568,54 @@ function findSeriesItems(items, seriesId) {
     .sort((a, b) => (a.date > b.date ? 1 : -1));
 }
 
+function getRecurringSignature(tx, includeStartDate = true) {
+  if (!tx || !tx.recurrence) return null;
+  const frequency = tx.recurrence.frequency === 'yearly' ? 'yearly' : 'monthly';
+  const parts = [
+    tx.type,
+    normalizeText(String(tx.category || '')).toLocaleLowerCase('pt-BR'),
+    normalizeText(String(tx.subcategory || '')).toLocaleLowerCase('pt-BR'),
+    normalizeText(String(tx.description || '')).toLocaleLowerCase('pt-BR'),
+    frequency,
+  ];
+  if (includeStartDate) {
+    parts.push(tx.recurrence.startDate || tx.date);
+  }
+  return parts.join('|');
+}
+
+function findSeriesItemsBySignature(items, signature, includeStartDate = true) {
+  if (!signature) return [];
+  return items
+    .filter((tx) => !!tx.recurrence && getRecurringSignature(tx, includeStartDate) === signature)
+    .sort((a, b) => (a.date > b.date ? 1 : -1));
+}
+
+function resolveRecurringSeries(items, targetTx) {
+  if (!targetTx || !targetTx.recurrence) return { seriesId: null, items: [] };
+
+  const bySeriesId = targetTx.recurrence.seriesId ? findSeriesItems(items, targetTx.recurrence.seriesId) : [];
+  const byStrictSignature = findSeriesItemsBySignature(items, getRecurringSignature(targetTx, true), true);
+  const byRelaxedSignature = findSeriesItemsBySignature(items, getRecurringSignature(targetTx, false), false);
+
+  let chosen = bySeriesId;
+  if (chosen.length <= 1 && byStrictSignature.length > chosen.length) chosen = byStrictSignature;
+  if (chosen.length <= 1 && byRelaxedSignature.length > chosen.length) chosen = byRelaxedSignature;
+
+  const merged = [...bySeriesId, ...chosen].sort((a, b) => (a.date > b.date ? 1 : -1));
+  const seen = new Set();
+  const unique = merged.filter((tx) => {
+    if (seen.has(tx.id)) return false;
+    seen.add(tx.id);
+    return true;
+  });
+
+  return {
+    seriesId: targetTx.recurrence.seriesId || unique[0]?.recurrence?.seriesId || createSeriesId(),
+    items: unique,
+  };
+}
+
 function recalcSeriesMetadata(items, seriesId) {
   const seriesItems = findSeriesItems(items, seriesId);
   if (!seriesItems.length) return;
@@ -618,7 +666,6 @@ function migrateRecurringSeriesData(items) {
       tx.subcategory,
       tx.description,
       tx.recurrence.startDate || tx.date,
-      tx.recurrence.total || '',
     ].join('|');
 
     if (!tx.recurrence.seriesId) {
@@ -764,7 +811,7 @@ function applyRecurringEdit({ txId, scope, patch, recurrenceCount }) {
   const target = all.find((tx) => tx.id === txId);
   if (!target) return false;
 
-  const isRecurring = !!(target.recurrence && target.recurrence.seriesId);
+  const isRecurring = !!target.recurrence;
   const normalizedScope = isRecurring ? scope : 'single';
 
   if (normalizedScope === 'single' || !isRecurring) {
@@ -774,10 +821,69 @@ function applyRecurringEdit({ txId, scope, patch, recurrenceCount }) {
     return true;
   }
 
-  const seriesId = target.recurrence.seriesId;
-  const seriesItems = findSeriesItems(all, seriesId);
+  const { seriesId, items: seriesItems } = resolveRecurringSeries(all, target);
+  if (!seriesItems.length) return false;
   const targetIndex = seriesItems.findIndex((tx) => tx.id === txId);
   const cutoffDate = target.date;
+
+  if (normalizedScope === 'future') {
+    const frequency = target.recurrence?.frequency === 'yearly' ? 'yearly' : 'monthly';
+    const shouldShiftDates = typeof patch.date === 'string' && isValidDateString(patch.date);
+    const anchorDate = shouldShiftDates ? patch.date : cutoffDate;
+
+    const pastSeriesItems = seriesItems.filter((tx) => tx.date < cutoffDate);
+    const futureSeriesItems = seriesItems.filter((tx) => tx.date >= cutoffDate);
+
+    const parsedCount = Number(recurrenceCount);
+    const hasDesiredCount = Number.isInteger(parsedCount) && parsedCount >= 1;
+    const minTotal = pastSeriesItems.length + 1;
+    const targetTotal = hasDesiredCount ? Math.max(parsedCount, minTotal) : seriesItems.length;
+    const targetFutureCount = Math.max(1, targetTotal - pastSeriesItems.length);
+
+    const targetDates = Array.from({ length: targetFutureCount }, (_, index) =>
+      frequency === 'yearly' ? addYears(anchorDate, index) : addMonths(anchorDate, index),
+    );
+
+    const futureByDate = new Map();
+    futureSeriesItems.forEach((tx) => {
+      if (!futureByDate.has(tx.date)) futureByDate.set(tx.date, tx);
+    });
+
+    const futureIds = new Set(futureSeriesItems.map((tx) => tx.id));
+    const rebuiltFuture = targetDates.map((date) => {
+      const existing = futureByDate.get(date) || (date === cutoffDate ? target : null);
+      const baseTx = existing ? { ...existing } : { ...target, id: crypto.randomUUID() };
+      const nextTx = applyPatch(baseTx, { ...patch, date });
+      nextTx.recurrence = {
+        ...(nextTx.recurrence || {}),
+        seriesId,
+        frequency,
+      };
+      futureIds.delete(nextTx.id);
+      return nextTx;
+    });
+
+    const kept = all.filter((tx) => !futureIds.has(tx.id));
+    const rebuiltIds = new Set(rebuiltFuture.map((tx) => tx.id));
+    const merged = [...kept.filter((tx) => !rebuiltIds.has(tx.id)), ...rebuiltFuture];
+    all.splice(0, all.length, ...merged);
+
+    const canonicalSeries = findSeriesItems(all, seriesId);
+    if (canonicalSeries.length <= 1) {
+      const resolvedIds = new Set(seriesItems.map((tx) => tx.id));
+      all.forEach((tx) => {
+        if (!resolvedIds.has(tx.id) && !rebuiltIds.has(tx.id)) return;
+        if (!tx.recurrence) tx.recurrence = {};
+        tx.recurrence.seriesId = seriesId;
+        tx.recurrence.frequency = frequency;
+      });
+    }
+
+    recalcSeriesMetadata(all, seriesId);
+    saveTransactions(all);
+    return true;
+  }
+
   const affectedItems = (
     normalizedScope === 'future'
       ? targetIndex >= 0
@@ -818,13 +924,35 @@ function applyRecurringEdit({ txId, scope, patch, recurrenceCount }) {
 }
 
 function estimateRecurringImpact(items, tx, scope, recurrenceCount) {
-  if (!tx || !tx.recurrence || !tx.recurrence.seriesId || scope === 'single') return 'Impacto: 1 lançamento.';
-  const seriesItems = findSeriesItems(items, tx.recurrence.seriesId);
+  if (!tx || !tx.recurrence || scope === 'single') return 'Impacto: 1 lançamento.';
+  const { items: seriesItems } = resolveRecurringSeries(items, tx);
+  if (!seriesItems.length) return 'Impacto: 1 lançamento.';
   const affected = scope === 'future' ? seriesItems.filter((item) => item.date >= tx.date) : seriesItems;
 
   const parsedCount = Number(recurrenceCount);
   if (!Number.isInteger(parsedCount) || parsedCount < 1) {
     return `Impacto estimado: ${affected.length} lançamento(s) alterado(s).`;
+  }
+
+  if (scope === 'future') {
+    const frequency = tx.recurrence.frequency === 'yearly' ? 'yearly' : 'monthly';
+    const lockedPastCount = seriesItems.filter((item) => item.date < tx.date).length;
+    const targetTotal = Math.max(parsedCount, lockedPastCount + 1);
+    const targetFutureCount = Math.max(1, targetTotal - lockedPastCount);
+    const targetDates = Array.from({ length: targetFutureCount }, (_, index) =>
+      frequency === 'yearly' ? addYears(tx.date, index) : addMonths(tx.date, index),
+    );
+    const existingFutureDates = new Set(seriesItems.filter((item) => item.date >= tx.date).map((item) => item.date));
+
+    let updated = 0;
+    let created = 0;
+    targetDates.forEach((date) => {
+      if (existingFutureDates.has(date)) updated += 1;
+      else created += 1;
+    });
+    const removed = Math.max(0, existingFutureDates.size - updated);
+
+    return `Impacto estimado: ${updated} lançamento(s) atualizado(s), +${created} novo(s) e ${removed} removido(s).`;
   }
 
   const lockedPastCount = scope === 'future' ? seriesItems.filter((item) => item.date < tx.date).length : 0;
@@ -860,7 +988,7 @@ function openEditModal(txId) {
   editAmountInput.value = tx.amount;
   editDateInput.value = tx.date;
 
-  const isRecurring = !!(tx.recurrence && tx.recurrence.seriesId);
+  const isRecurring = !!tx.recurrence;
   editScopeWrap.classList.toggle('hidden', !isRecurring);
   editRecurrenceCountWrap.classList.toggle('hidden', !isRecurring);
   editRecurrenceCountInput.value = isRecurring ? tx.recurrence.total : '';
@@ -948,6 +1076,7 @@ editForm.querySelectorAll('input[name="edit-scope"]').forEach((radio) => {
   radio.addEventListener('change', refreshEditImpact);
 });
 editRecurrenceCountInput.addEventListener('input', refreshEditImpact);
+editDateInput.addEventListener('change', refreshEditImpact);
 cancelEditButton.addEventListener('click', closeEditModal);
 
 editForm.addEventListener('submit', (ev) => {
