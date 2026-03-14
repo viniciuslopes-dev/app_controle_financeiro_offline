@@ -359,6 +359,13 @@ function formatMoney(value) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 }
 
+function formatDateBR(value) {
+  if (!isValidDateString(value)) return value;
+
+  const [year, month, day] = value.split('-');
+  return `${day}/${month}/${year}`;
+}
+
 function computeSummary(items) {
   const totals = { income: 0, expense: 0, investment: 0, goal: 0 };
   for (const tx of items) totals[tx.type] += tx.amount;
@@ -702,7 +709,7 @@ function renderList(items, month) {
         <div>
           <strong>${tx.description}</strong>
           ${tx.recurrence ? '<span class="badge">recorrente</span>' : ''}
-          <div class="tx-meta">${tx.type} • ${tx.category} › ${tx.subcategory || 'Outros'} • ${tx.date} • ${formatMoney(tx.amount)}</div>
+          <div class="tx-meta">${tx.type} • ${tx.category} › ${tx.subcategory || 'Outros'} • ${formatDateBR(tx.date)} • ${formatMoney(tx.amount)}</div>
         </div>
         <div class="tx-actions">
           <button class="edit-btn" data-id="${tx.id}">Editar</button>
