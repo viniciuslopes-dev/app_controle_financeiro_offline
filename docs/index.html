@@ -25,6 +25,24 @@
 
     <main>
       <section class="card" data-view="more">
+        <h2>Sessão e sincronização</h2>
+        <form id="session-form" class="nested-grid">
+          <label>
+            Email ou identificador
+            <input id="auth-identifier" autocomplete="username" placeholder="nome@exemplo.com" required />
+          </label>
+          <label>
+            Senha ou código
+            <input id="auth-secret" type="password" autocomplete="current-password" placeholder="Digite sua senha/código" required />
+          </label>
+          <button id="sign-in-button" type="submit">Entrar</button>
+          <button id="sign-out-button" type="button" class="secondary-btn">Sair</button>
+        </form>
+        <p id="session-status" aria-live="polite">Sessão: não autenticado.</p>
+        <p id="sync-status" aria-live="polite">Sincronização: verificando conectividade...</p>
+      </section>
+
+      <section class="card" data-view="more">
         <h2>Categorias e subcategorias</h2>
         <form id="category-form" class="nested-grid">
           <label>

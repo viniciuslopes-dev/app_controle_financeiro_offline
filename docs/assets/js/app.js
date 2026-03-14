@@ -1,6 +1,7 @@
 const STORAGE_KEY = 'finance_offline_transactions_v2';
 const LEGACY_STORAGE_KEY = 'finance_offline_transactions_v1';
 const CATEGORY_STORAGE_KEY = 'finance_offline_categories_v1';
+const SESSION_STORAGE_KEY = 'finance_offline_session_v1';
 
 const DEFAULT_CATEGORIES = {
   Moradia: ['Aluguel', 'Luz', 'Água', 'Internet'],
@@ -37,6 +38,12 @@ const refreshAppButton = document.getElementById('refresh-app');
 const exportDataButton = document.getElementById('export-data');
 const importDataInput = document.getElementById('import-data-file');
 const importDataButton = document.getElementById('import-data');
+const sessionForm = document.getElementById('session-form');
+const authIdentifierInput = document.getElementById('auth-identifier');
+const authSecretInput = document.getElementById('auth-secret');
+const signOutButton = document.getElementById('sign-out-button');
+const sessionStatusEl = document.getElementById('session-status');
+const syncStatusEl = document.getElementById('sync-status');
 
 
 const navTabs = document.querySelectorAll('.main-nav__tab');
@@ -86,6 +93,95 @@ const editRecurrenceCountWrap = document.getElementById('edit-recurrence-count-w
 const editRecurrenceCountInput = document.getElementById('edit-recurrence-count');
 const editImpactEl = document.getElementById('edit-impact');
 const cancelEditButton = document.getElementById('edit-cancel');
+
+let currentUser = null;
+
+function persistSession(user) {
+  if (!user) {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+    return;
+  }
+
+  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(user));
+}
+
+function getCurrentUser() {
+  return currentUser;
+}
+
+function loadSession() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) || 'null');
+    if (!stored || typeof stored !== 'object') return null;
+
+    const identifier = normalizeText(String(stored.identifier || ''));
+    if (!identifier) return null;
+
+    return {
+      identifier,
+      signedInAt: stored.signedInAt || new Date().toISOString(),
+      provider: stored.provider || 'local-offline',
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function signIn(identifier, secret) {
+  const normalizedIdentifier = normalizeText(String(identifier || ''));
+  const normalizedSecret = String(secret || '').trim();
+  if (!normalizedIdentifier || !normalizedSecret) {
+    return { ok: false, message: 'Informe identificador e senha/código.' };
+  }
+
+  const user = {
+    identifier: normalizedIdentifier,
+    signedInAt: new Date().toISOString(),
+    provider: 'local-offline',
+  };
+
+  currentUser = user;
+  persistSession(user);
+  return { ok: true, user };
+}
+
+function signOut() {
+  currentUser = null;
+  persistSession(null);
+}
+
+function updateSyncStatus() {
+  if (!syncStatusEl) return;
+
+  if (navigator.onLine) {
+    syncStatusEl.textContent = 'Sincronização: internet disponível. Dados locais continuam ativos e prontos para sincronizar.';
+    return;
+  }
+
+  syncStatusEl.textContent = 'Sincronização: sem internet (modo offline). O app segue operando com localStorage normalmente.';
+}
+
+function renderSessionState() {
+  if (sessionStatusEl) {
+    const user = getCurrentUser();
+    sessionStatusEl.textContent = user
+      ? `Sessão: autenticado como ${user.identifier}.`
+      : 'Sessão: não autenticado.';
+  }
+
+  if (authIdentifierInput) {
+    const user = getCurrentUser();
+    authIdentifierInput.value = user ? user.identifier : '';
+  }
+
+  if (authSecretInput) authSecretInput.value = '';
+
+  if (signOutButton) {
+    signOutButton.disabled = !getCurrentUser();
+  }
+
+  updateSyncStatus();
+}
 
 function getLocalTodayISO() {
   const now = new Date();
@@ -2033,9 +2129,40 @@ if (importDataButton) {
   });
 }
 
+if (sessionForm) {
+  sessionForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+
+    const result = await signIn(
+      authIdentifierInput ? authIdentifierInput.value : '',
+      authSecretInput ? authSecretInput.value : '',
+    );
+
+    if (!result.ok) {
+      window.alert(result.message || 'Não foi possível entrar.');
+      return;
+    }
+
+    renderSessionState();
+  });
+}
+
+if (signOutButton) {
+  signOutButton.addEventListener('click', () => {
+    signOut();
+    renderSessionState();
+  });
+}
+
+window.addEventListener('online', updateSyncStatus);
+window.addEventListener('offline', updateSyncStatus);
+
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./service-worker.js').catch(console.error);
 }
+
+currentUser = loadSession();
+renderSessionState();
 
 migrateLegacyData();
 const txs = loadTransactions();
