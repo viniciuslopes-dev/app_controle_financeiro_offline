@@ -177,7 +177,13 @@
 
         <label>
           Ver subcategorias das categorias (selecione uma ou mais)
-          <select id="report-category-filter" multiple></select>
+          <div id="report-category-dropdown" class="multi-dropdown" data-open="false">
+            <button id="report-category-toggle" class="multi-dropdown__toggle" type="button" aria-haspopup="listbox" aria-expanded="false">
+              Todas as categorias
+            </button>
+            <div id="report-category-options" class="multi-dropdown__options hidden" role="listbox" aria-multiselectable="true"></div>
+          </div>
+          <select id="report-category-filter" multiple class="visually-hidden" aria-hidden="true" tabindex="-1"></select>
         </label>
 
         <h3>Lançamentos por categoria (macro, mês selecionado)</h3>
