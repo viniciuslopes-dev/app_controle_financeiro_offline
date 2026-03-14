@@ -1128,6 +1128,9 @@ function renderQuickSubcategoryGrid() {
   quickSubcategoryGrid.querySelectorAll('[data-subcategory]').forEach((button) => {
     button.addEventListener('click', () => {
       quickEntryState.subcategory = button.dataset.subcategory || '';
+      if (quickEntryState.subcategory) {
+        subcategoryInput.value = quickEntryState.subcategory;
+      }
       renderQuickSubcategoryGrid();
     });
   });
@@ -1138,6 +1141,12 @@ function renderQuickCategoryGrid() {
   const categories = loadCategories();
   const categoryNames = Object.keys(categories).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
+  if (!categoryNames.length) {
+    quickCategoryGrid.innerHTML = '<p class="quick-entry-empty">Cadastre ao menos uma categoria.</p>';
+    quickSubcategoryGrid.innerHTML = '';
+    return;
+  }
+
   quickCategoryGrid.innerHTML = categoryNames
     .map((name) => `<button type="button" class="quick-chip ${name === quickEntryState.category ? 'selected' : ''}" data-category="${name}">${name}</button>`)
     .join('');
@@ -1145,8 +1154,15 @@ function renderQuickCategoryGrid() {
   quickCategoryGrid.querySelectorAll('[data-category]').forEach((button) => {
     button.addEventListener('click', () => {
       quickEntryState.category = button.dataset.category || '';
+      if (quickEntryState.category) {
+        categoryInput.value = quickEntryState.category;
+        syncSubcategoryOptions();
+      }
       const subs = categories[quickEntryState.category] || [];
       quickEntryState.subcategory = subs[0] || '';
+      if (quickEntryState.subcategory) {
+        subcategoryInput.value = quickEntryState.subcategory;
+      }
       renderQuickCategoryGrid();
       renderQuickSubcategoryGrid();
     });
@@ -1205,7 +1221,11 @@ categoryForm.addEventListener('submit', (ev) => {
   render();
 });
 
-categoryInput.addEventListener('change', syncSubcategoryOptions);
+categoryInput.addEventListener('change', () => {
+  syncSubcategoryOptions();
+  syncQuickEntryFromForm();
+  syncQuickEntryOptions();
+});
 reportCategoryFilter.addEventListener('change', render);
 reportTypeFilter.addEventListener('change', render);
 
@@ -1282,6 +1302,8 @@ form.addEventListener('submit', (ev) => {
 quickEntryTypeButtons.forEach((button) => {
   button.addEventListener('click', () => {
     quickEntryState.type = button.dataset.type || 'expense';
+    const typeSelect = document.getElementById('type');
+    if (typeSelect) typeSelect.value = quickEntryState.type;
     renderQuickTypeButtons();
   });
 });
@@ -1300,10 +1322,12 @@ if (quickDateInput) {
 
 if (quickSaveButton) {
   quickSaveButton.addEventListener('click', () => {
+    const fallbackCategory = normalizeText(categoryInput.value || '');
+    const fallbackSubcategory = normalizeText(subcategoryInput.value || '');
     const baseTx = buildBaseTransaction({
       type: quickEntryState.type,
-      category: quickEntryState.category,
-      subcategory: quickEntryState.subcategory,
+      category: quickEntryState.category || fallbackCategory,
+      subcategory: quickEntryState.subcategory || fallbackSubcategory,
       description: `Lançamento rápido • ${quickEntryState.subcategory || quickEntryState.category || 'Sem categoria'}`,
       amount: quickAmountInput?.value || quickEntryState.amount,
       date: quickDateInput?.value || quickEntryState.date,
