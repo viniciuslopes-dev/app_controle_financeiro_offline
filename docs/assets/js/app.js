@@ -35,6 +35,28 @@ const exportDataButton = document.getElementById('export-data');
 const importDataInput = document.getElementById('import-data-file');
 const importDataButton = document.getElementById('import-data');
 
+
+const navTabs = document.querySelectorAll('.main-nav__tab');
+const viewSections = document.querySelectorAll('[data-view]');
+let activeView = 'home';
+
+function setActiveView(view) {
+  const normalizedView = String(view || '').trim();
+  if (!normalizedView) return;
+
+  activeView = normalizedView;
+
+  viewSections.forEach((section) => {
+    section.classList.toggle('hidden', section.dataset.view !== activeView);
+  });
+
+  navTabs.forEach((tab) => {
+    const isActive = tab.dataset.navView === activeView;
+    tab.classList.toggle('active', isActive);
+    tab.setAttribute('aria-selected', String(isActive));
+  });
+}
+
 const quickEntryTypeButtons = document.querySelectorAll('.quick-type-btn');
 const quickCategoryGrid = document.getElementById('quick-category-grid');
 const quickSubcategoryGrid = document.getElementById('quick-subcategory-grid');
@@ -1238,6 +1260,13 @@ async function refreshAppWithoutLosingData() {
   window.location.reload();
 }
 
+
+navTabs.forEach((tab) => {
+  tab.addEventListener('click', () => {
+    setActiveView(tab.dataset.navView);
+  });
+});
+
 categoryForm.addEventListener('submit', (ev) => {
   ev.preventDefault();
   addCategoryAndSubcategory(
@@ -1431,4 +1460,5 @@ if (migrateRecurringSeriesData(txs)) {
 syncQuickEntryFromForm();
 syncCategoryOptions();
 resetQuickEntry();
+setActiveView(activeView);
 render();
