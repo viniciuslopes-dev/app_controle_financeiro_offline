@@ -487,28 +487,46 @@ function filterByMonthAndType(items, month, type) {
   return filterByType(monthItems, type);
 }
 
+function getSummaryDelta(current, previous) {
+  if (previous === 0 && current === 0) return { text: '', className: 'summary-delta--neutral' };
+  const diff = current - previous;
+  const pct = previous > 0 ? (diff / previous) * 100 : null;
+  const arrow = diff > 0 ? '\u25B2' : diff < 0 ? '\u25BC' : '';
+  const pctText = pct !== null ? ` ${pct >= 0 ? '+' : ''}${formatPercent(pct)}%` : '';
+  const className = diff > 0 ? 'summary-delta--up' : diff < 0 ? 'summary-delta--down' : 'summary-delta--neutral';
+  return { text: `${arrow} ${formatMoney(Math.abs(diff))}${pctText}`, className };
+}
+
 function renderSummary(items, month) {
   const monthItems = filterByMonth(items, month);
   const s = computeSummary(monthItems);
-
   const totalDiscounted = s.expense + s.investment + s.goal;
 
-  summaryEl.innerHTML = [
-    ['Receitas', s.income],
-    ['Despesas', s.expense],
-    ['Investimentos', s.investment],
-    ['Metas', s.goal],
-    ['Total descontado', totalDiscounted],
-    ['Saldo', s.balance],
-  ]
-    .map(
-      ([label, value]) => `
-      <div class="summary-item">
+  const prevMonth = getPreviousMonth(month);
+  const prevItems = prevMonth ? filterByMonth(items, prevMonth) : [];
+  const p = computeSummary(prevItems);
+  const prevTotalDiscounted = p.expense + p.investment + p.goal;
+
+  const rows = [
+    ['Receitas', s.income, p.income, 'summary-item--income'],
+    ['Despesas', s.expense, p.expense, 'summary-item--expense'],
+    ['Investimentos', s.investment, p.investment, 'summary-item--investment'],
+    ['Metas', s.goal, p.goal, 'summary-item--goal'],
+    ['Total descontado', totalDiscounted, prevTotalDiscounted, 'summary-item--discounted'],
+    ['Saldo', s.balance, p.balance, s.balance >= 0 ? 'summary-item--balance-positive' : 'summary-item--balance-negative'],
+  ];
+
+  summaryEl.innerHTML = rows
+    .map(([label, value, prevValue, modifier]) => {
+      const delta = prevMonth ? getSummaryDelta(value, prevValue) : null;
+      const deltaHtml = delta && delta.text ? `<span class="summary-delta ${delta.className}">${delta.text}</span>` : '';
+      return `
+      <div class="summary-item ${modifier}">
         <small>${label}</small>
         <strong>${formatMoney(value)}</strong>
-      </div>
-    `,
-    )
+        ${deltaHtml}
+      </div>`;
+    })
     .join('');
 }
 
@@ -554,8 +572,9 @@ function renderBars(
       const width = row.value > 0 ? Math.max(rawWidth, 2) : 0;
       const pct = total > 0 ? (row.value / total) * 100 : 0;
       const rowTone = row.tone || tone;
+      const extraClass = row.rowClassName || '';
       return `
-        <div class="bar-row">
+        <div class="bar-row ${extraClass}">
           <small>${row.label}</small>
           <div class="bar bar-${rowTone}"><span style="width:${width}%"></span></div>
           <strong class="bar-value">${formatMoney(row.value)}</strong>
@@ -593,17 +612,36 @@ function renderInflowOutflowChart(items, month) {
   const rows = [
     { label: 'Entradas', value: summary.income, tone: 'income' },
     {
-      label: 'Saídas',
+      label: 'Sa\u00eddas',
       value: outflow,
       tone: 'outflow',
     },
   ];
 
-  renderBars(inflowOutflowChartEl, rows, 'Sem dados de entradas e saídas para o período selecionado.', {
-    summaryLabel: 'Diferença (Entradas - Saídas)',
+  let insightText = '';
+  if (summary.income > 0 && outflow > 0) {
+    if (outflow > summary.income) {
+      const excessPct = ((outflow - summary.income) / summary.income) * 100;
+      insightText = `\u26A0 Sa\u00eddas excedem entradas em ${formatPercent(excessPct)}%`;
+    } else {
+      const savePct = ((summary.income - outflow) / summary.income) * 100;
+      insightText = `\u2714 Voc\u00ea economizou ${formatPercent(savePct)}% da renda`;
+    }
+  }
+
+  const delta = getMonthOverMonthDelta(items, month, 'outflow');
+
+  renderBars(inflowOutflowChartEl, rows, 'Sem dados de entradas e sa\u00eddas para o per\u00edodo selecionado.', {
+    summaryLabel: 'Diferen\u00e7a (Entradas - Sa\u00eddas)',
     summaryValue: netFlow,
     scaleMode: 'total',
+    delta,
   });
+
+  if (insightText && monthItems.length) {
+    const isAlert = outflow > summary.income;
+    inflowOutflowChartEl.innerHTML += `<p class="${isAlert ? 'insight-alert' : 'insight-positive'}">${insightText}</p>`;
+  }
 }
 
 function renderTypeCompositionChart(items, month) {
@@ -738,12 +776,28 @@ function renderMonthlyChart(items) {
 
   const average = rows.length ? rows.reduce((acc, row) => acc + row.value, 0) / rows.length : 0;
   const tone = selectedType === 'income' ? 'income' : selectedType === 'all' ? 'default' : 'outflow';
+  const isIncome = selectedType === 'income';
+
+  const coloredRows = rows.map((row) => {
+    let rowClassName = '';
+    if (row.value > average) {
+      rowClassName = isIncome ? 'bar-row--income-above' : 'bar-row--above-avg';
+    } else {
+      rowClassName = isIncome ? 'bar-row--income-below' : 'bar-row--below-avg';
+    }
+    return { ...row, rowClassName };
+  });
+
+  const values = rows.map((r) => r.value);
+  const minVal = values.length ? Math.min(...values) : 0;
+  const maxVal = values.length ? Math.max(...values) : 0;
+  const minMaxText = rows.length ? `M\u00edn: ${formatMoney(minVal)} \u2022 M\u00e1x: ${formatMoney(maxVal)}` : '';
 
   renderBars(
     monthlyChartEl,
-    rows,
-    `Sem evolução mensal para ${getTypeLabel(selectedType).toLowerCase()} no período.`,
-    { summaryLabel: 'Média mensal', summaryValue: average, tone },
+    coloredRows,
+    `Sem evolu\u00e7\u00e3o mensal para ${getTypeLabel(selectedType).toLowerCase()} no per\u00edodo.`,
+    { summaryLabel: 'M\u00e9dia mensal', summaryValue: average, tone, insightText: minMaxText },
   );
 
   renderMonthlyTrendChart(rows, tone);
@@ -779,22 +833,212 @@ function renderDashboardInsights(items, month) {
   const top3Pct = total > 0 ? (top3Value / total) * 100 : 0;
   const status = getConcentrationStatus(top1Pct);
 
+  // Recorrentes vs avulsos
+  const recurringTotal = monthItems.filter((tx) => tx.recurrence).reduce((acc, tx) => acc + tx.amount, 0);
+  const recurringPct = total > 0 ? (recurringTotal / total) * 100 : 0;
+
+  // Maior variação vs mês anterior
+  const prevMonth = getPreviousMonth(month);
+  let biggestChangeHtml = '';
+  if (prevMonth) {
+    const prevMonthItems = filterByMonth(items, prevMonth).filter((tx) => tx.type !== 'income');
+    const prevByCategory = prevMonthItems.reduce((acc, tx) => {
+      acc[tx.category] = (acc[tx.category] || 0) + tx.amount;
+      return acc;
+    }, {});
+    const allCats = new Set([...Object.keys(byCategory), ...Object.keys(prevByCategory)]);
+    let biggestChange = { cat: '', change: 0, pct: 0 };
+    for (const cat of allCats) {
+      const curr = byCategory[cat] || 0;
+      const prev = prevByCategory[cat] || 0;
+      const change = curr - prev;
+      if (Math.abs(change) > Math.abs(biggestChange.change) && prev > 0) {
+        biggestChange = { cat, change, pct: (change / prev) * 100 };
+      }
+    }
+    if (biggestChange.cat) {
+      const arrow = biggestChange.change > 0 ? '\u25B2' : '\u25BC';
+      const changeClass = biggestChange.change > 0 ? 'badge-status--high' : 'badge-status--normal';
+      biggestChangeHtml = `
+    <div class="dashboard-insight-item">
+      <div>
+        <small>Maior varia\u00e7\u00e3o vs. m\u00eas anterior</small>
+        <strong>${biggestChange.cat}: ${arrow} ${formatPercent(Math.abs(biggestChange.pct))}%</strong>
+      </div>
+      <span class="badge-status ${changeClass}">${biggestChange.change > 0 ? 'Aumento' : 'Redu\u00e7\u00e3o'}</span>
+    </div>`;
+    }
+  }
+
+  // Ritmo de gasto
+  const daysTotal = getDaysInMonth(month);
+  const daysUsed = getDaysElapsed(month);
+  const dailyRate = daysUsed > 0 ? total / daysUsed : 0;
+  const projected = dailyRate * daysTotal;
+  const summary = computeSummary(filterByMonth(items, month));
+  const projectedSustainable = summary.income > 0 && projected <= summary.income;
+  const ritmoStatus = projectedSustainable ? { label: 'Sustent\u00e1vel', className: 'badge-status--normal' } : { label: 'Acima da renda', className: 'badge-status--high' };
+
   dashboardInsightsEl.innerHTML = `
     <div class="dashboard-insight-item">
       <div>
-        <small>Maior categoria de saída</small>
+        <small>Maior categoria de sa\u00edda</small>
         <strong>${top1.label}: ${formatPercent(top1Pct)}%</strong>
       </div>
       <span class="badge-status ${status.className}">${status.label}</span>
     </div>
     <div class="dashboard-insight-item">
       <div>
-        <small>Concentração Top 3 categorias</small>
-        <strong>${formatPercent(top3Pct)}% das saídas do mês</strong>
+        <small>Concentra\u00e7\u00e3o Top 3 categorias</small>
+        <strong>${formatPercent(top3Pct)}% das sa\u00eddas do m\u00eas</strong>
       </div>
       <span class="badge-status badge-status--normal">Info</span>
+    </div>${biggestChangeHtml}
+    <div class="dashboard-insight-item">
+      <div>
+        <small>Recorrentes vs. avulsos</small>
+        <strong>${formatPercent(recurringPct)}% recorrentes</strong>
+      </div>
+      <span class="badge-status badge-status--normal">${recurringPct > 70 ? 'Pouca flexibilidade' : 'Flex\u00edvel'}</span>
+    </div>
+    <div class="dashboard-insight-item">
+      <div>
+        <small>Ritmo de gasto (${daysUsed}/${daysTotal} dias)</small>
+        <strong>Projetado: ${formatMoney(projected)}</strong>
+      </div>
+      <span class="badge-status ${ritmoStatus.className}">${ritmoStatus.label}</span>
     </div>
   `;
+}
+
+function getDaysInMonth(month) {
+  if (!month) return 30;
+  const [year, m] = month.split('-').map(Number);
+  return new Date(year, m, 0).getDate();
+}
+
+function getDaysElapsed(month) {
+  if (!month) return 1;
+  const today = new Date();
+  const [year, m] = month.split('-').map(Number);
+  const todayMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  if (month === todayMonth) return today.getDate();
+  if (month < todayMonth) return getDaysInMonth(month);
+  return 1;
+}
+
+function getKPIStatus(metric, value) {
+  const thresholds = {
+    savingsRate: [
+      { max: 10, label: 'Cr\u00edtico', className: 'badge-status--high' },
+      { max: 20, label: 'Aten\u00e7\u00e3o', className: 'badge-status--attention' },
+      { max: Infinity, label: 'Saud\u00e1vel', className: 'badge-status--normal' },
+    ],
+    commitmentRate: [
+      { max: 70, label: 'Saud\u00e1vel', className: 'badge-status--normal' },
+      { max: 90, label: 'Aten\u00e7\u00e3o', className: 'badge-status--attention' },
+      { max: Infinity, label: 'Cr\u00edtico', className: 'badge-status--high' },
+    ],
+  };
+
+  const levels = thresholds[metric];
+  if (!levels) return { label: 'Info', className: 'badge-status--normal' };
+  for (const level of levels) {
+    if (value <= level.max) return { label: level.label, className: level.className };
+  }
+  return { label: 'Info', className: 'badge-status--normal' };
+}
+
+function renderFinancialKPIs(items, month) {
+  const kpiEl = document.getElementById('financial-kpis');
+  if (!kpiEl) return;
+
+  const monthItems = filterByMonth(items, month);
+  const s = computeSummary(monthItems);
+  const outflow = s.expense + s.investment + s.goal;
+
+  if (!monthItems.length) {
+    kpiEl.innerHTML = '<p class="empty">Sem dados para calcular indicadores.</p>';
+    return;
+  }
+
+  const savingsRate = s.income > 0 ? ((s.investment + s.goal) / s.income) * 100 : 0;
+  const commitmentRate = s.income > 0 ? (outflow / s.income) * 100 : 0;
+  const daysInMonth = getDaysInMonth(month);
+  const daysElapsed = getDaysElapsed(month);
+  const dailyAvgSpending = daysElapsed > 0 ? outflow / daysElapsed : 0;
+  const projectedBalance = daysElapsed > 0 ? s.income - (dailyAvgSpending * daysInMonth) : s.balance;
+
+  const savingsStatus = getKPIStatus('savingsRate', savingsRate);
+  const commitmentStatus = getKPIStatus('commitmentRate', commitmentRate);
+
+  kpiEl.innerHTML = `<div class="kpi-grid">
+    <div class="kpi-item">
+      <div>
+        <small>Taxa de poupan\u00e7a</small>
+        <strong>${formatPercent(savingsRate)}%</strong>
+      </div>
+      <span class="badge-status ${savingsStatus.className}">${savingsStatus.label}</span>
+    </div>
+    <div class="kpi-item">
+      <div>
+        <small>Comprometimento da renda</small>
+        <strong>${formatPercent(commitmentRate)}%</strong>
+      </div>
+      <span class="badge-status ${commitmentStatus.className}">${commitmentStatus.label}</span>
+    </div>
+    <div class="kpi-item">
+      <div>
+        <small>M\u00e9dia di\u00e1ria de gastos</small>
+        <strong>${formatMoney(dailyAvgSpending)}</strong>
+      </div>
+      <span class="badge-status badge-status--normal">${daysElapsed}/${daysInMonth} dias</span>
+    </div>
+    <div class="kpi-item">
+      <div>
+        <small>Proje\u00e7\u00e3o de saldo mensal</small>
+        <strong>${formatMoney(projectedBalance)}</strong>
+      </div>
+      <span class="badge-status ${projectedBalance >= 0 ? 'badge-status--normal' : 'badge-status--high'}">${projectedBalance >= 0 ? 'Positivo' : 'Negativo'}</span>
+    </div>
+  </div>`;
+}
+
+function renderYTDSummary(items, month) {
+  const ytdEl = document.getElementById('ytd-summary');
+  if (!ytdEl) return;
+
+  const year = month ? month.split('-')[0] : String(new Date().getFullYear());
+  const yearItems = items.filter((tx) => tx.date.startsWith(year));
+
+  if (!yearItems.length) {
+    ytdEl.innerHTML = '<p class="empty">Sem dados acumulados para o ano.</p>';
+    return;
+  }
+
+  const s = computeSummary(yearItems);
+  const totalDiscounted = s.expense + s.investment + s.goal;
+  const monthsWithData = new Set(yearItems.map((tx) => tx.date.slice(0, 7))).size;
+
+  const rows = [
+    ['Receitas', s.income, 'summary-item--income'],
+    ['Despesas', s.expense, 'summary-item--expense'],
+    ['Investimentos', s.investment, 'summary-item--investment'],
+    ['Metas', s.goal, 'summary-item--goal'],
+    ['Total descontado', totalDiscounted, 'summary-item--discounted'],
+    ['Saldo anual', s.balance, s.balance >= 0 ? 'summary-item--balance-positive' : 'summary-item--balance-negative'],
+  ];
+
+  ytdEl.innerHTML = `<div class="ytd-grid">${rows
+    .map(([label, value, modifier]) => {
+      const avg = monthsWithData > 0 ? value / monthsWithData : 0;
+      return `<div class="ytd-item ${modifier}">
+        <small>${label}</small>
+        <strong>${formatMoney(value)}</strong>
+        <span class="ytd-avg">M\u00e9dia: ${formatMoney(avg)}/m\u00eas (${monthsWithData} meses)</span>
+      </div>`;
+    })
+    .join('')}</div>`;
 }
 
 function findSeriesItems(items, seriesId) {
@@ -1268,6 +1512,8 @@ function render() {
   const txs = loadTransactions();
   const selectedMonth = getCurrentMonthFilter();
   renderSummary(txs, selectedMonth);
+  renderFinancialKPIs(txs, selectedMonth);
+  renderYTDSummary(txs, selectedMonth);
   renderTypeCompositionChart(txs, selectedMonth);
   renderInflowOutflowChart(txs, selectedMonth);
   renderCategoryChart(txs, selectedMonth);
