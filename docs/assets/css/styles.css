@@ -280,6 +280,28 @@ button {
   font-weight: 600;
 }
 
+
+.quick-selection-group {
+  display: grid;
+  gap: .45rem;
+  padding: .55rem;
+  border: 1px dashed color-mix(in srgb, var(--border) 82%, var(--primary));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--card) 88%, var(--bg));
+}
+
+.quick-selection-group--subcategory {
+  border-style: solid;
+}
+
+.quick-selection-title {
+  margin: 0;
+  font-size: .85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
 .quick-category-grid,
 .quick-subcategory-grid {
   display: grid;
