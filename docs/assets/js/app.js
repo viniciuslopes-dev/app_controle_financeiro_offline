@@ -463,16 +463,21 @@ function renderBars(
 function renderInflowOutflowChart(items, month) {
   const monthItems = filterByMonth(items, month);
   const summary = computeSummary(monthItems);
+  const outflow = summary.expense + summary.investment + summary.goal;
+  const netFlow = summary.income - outflow;
   const rows = [
     { label: 'Entradas', value: summary.income, tone: 'income' },
     {
       label: 'Saídas',
-      value: summary.expense + summary.investment + summary.goal,
+      value: outflow,
       tone: 'outflow',
     },
   ];
 
-  renderBars(inflowOutflowChartEl, rows, 'Sem dados de entradas e saídas para o período selecionado.');
+  renderBars(inflowOutflowChartEl, rows, 'Sem dados de entradas e saídas para o período selecionado.', {
+    summaryLabel: 'Diferença (Entradas - Saídas)',
+    summaryValue: netFlow,
+  });
 }
 
 function renderTypeCompositionChart(items, month) {
