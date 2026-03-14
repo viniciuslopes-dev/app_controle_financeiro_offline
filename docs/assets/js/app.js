@@ -495,9 +495,9 @@ function getSummaryDelta(current, previous, invertColors = false) {
   const pctText = pct !== null ? ` ${pct >= 0 ? '+' : ''}${formatPercent(pct)}%` : '';
   const isUp = diff > 0;
   const isDown = diff < 0;
-  const goodClass = invertColors ? 'summary-delta--down' : 'summary-delta--up';
-  const badClass = invertColors ? 'summary-delta--up' : 'summary-delta--down';
-  const className = isUp ? badClass : isDown ? goodClass : 'summary-delta--neutral';
+  const upClass = invertColors ? 'summary-delta--down' : 'summary-delta--up';
+  const downClass = invertColors ? 'summary-delta--up' : 'summary-delta--down';
+  const className = isUp ? upClass : isDown ? downClass : 'summary-delta--neutral';
   return { text: `${arrow} ${formatMoney(Math.abs(diff))}${pctText}`, className };
 }
 
