@@ -107,7 +107,7 @@ function applyEntryDefaults() {
 }
 
 applyEntryDefaults();
-monthFilterInput.value = getLocalCurrentMonthISO();
+if (monthFilterInput) monthFilterInput.value = getLocalCurrentMonthISO();
 
 function loadCategories() {
   try {
@@ -160,11 +160,13 @@ function syncCategoryOptions() {
   const categoryNames = Object.keys(categories).sort((a, b) => a.localeCompare(b, 'pt-BR'));
   const selectedReportCategories = getSelectedReportCategories();
 
-  reportCategoryFilter.innerHTML = categoryNames.map((name) => `<option value="${name}">${name}</option>`).join('');
+  if (reportCategoryFilter) {
+    reportCategoryFilter.innerHTML = categoryNames.map((name) => `<option value="${name}">${name}</option>`).join('');
 
-  Array.from(reportCategoryFilter.options).forEach((option) => {
-    option.selected = selectedReportCategories.includes(option.value);
-  });
+    Array.from(reportCategoryFilter.options).forEach((option) => {
+      option.selected = selectedReportCategories.includes(option.value);
+    });
+  }
 
   syncQuickEntryOptions();
   syncReportCategoryDropdown();
@@ -181,6 +183,8 @@ function syncEditSubcategories() {
 }
 
 function getSelectedReportCategories() {
+  if (!reportCategoryFilter) return [];
+
   return Array.from(reportCategoryFilter.selectedOptions)
     .map((option) => option.value)
     .filter(Boolean);
@@ -206,7 +210,8 @@ function renderReportCategoryDropdownOptions() {
   if (!reportCategoryOptions) return;
 
   const selected = new Set(getSelectedReportCategories());
-  reportCategoryOptions.innerHTML = Array.from(reportCategoryFilter.options)
+  const options = reportCategoryFilter ? Array.from(reportCategoryFilter.options) : [];
+  reportCategoryOptions.innerHTML = options
     .map((option) => `
       <label class="multi-dropdown__option">
         <input type="checkbox" value="${option.value}" ${selected.has(option.value) ? 'checked' : ''} />
@@ -221,9 +226,11 @@ function renderReportCategoryDropdownOptions() {
         Array.from(reportCategoryOptions.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value),
       );
 
-      Array.from(reportCategoryFilter.options).forEach((option) => {
-        option.selected = selectedValues.has(option.value);
-      });
+      if (reportCategoryFilter) {
+        Array.from(reportCategoryFilter.options).forEach((option) => {
+          option.selected = selectedValues.has(option.value);
+        });
+      }
 
       updateReportCategoryToggleLabel();
       render();
@@ -245,6 +252,8 @@ function syncReportCategoryDropdown() {
 }
 
 function renderCategoryList() {
+  if (!categoryListEl) return;
+
   const categories = loadCategories();
   const rows = Object.entries(categories).sort((a, b) => a[0].localeCompare(b[0], 'pt-BR'));
 
@@ -487,7 +496,7 @@ function computeSummary(items) {
 }
 
 function getCurrentMonthFilter() {
-  return monthFilterInput.value;
+  return monthFilterInput ? monthFilterInput.value : '';
 }
 
 function getPreviousMonth(month) {
@@ -501,6 +510,10 @@ function getPreviousMonth(month) {
 function filterByMonth(items, month) {
   if (!month) return items;
   return items.filter((tx) => tx.date.startsWith(month));
+}
+
+function getSelectedReportType() {
+  return reportTypeFilter ? reportTypeFilter.value : 'outflow';
 }
 
 function getTypeLabel(type) {
@@ -710,7 +723,7 @@ function renderTypeCompositionChart(items, month) {
 }
 
 function renderCategoryChart(items, month) {
-  const selectedType = reportTypeFilter.value;
+  const selectedType = getSelectedReportType();
   const filtered = filterByMonthAndType(items, month, selectedType);
   const byCategory = filtered.reduce((acc, tx) => {
     acc[tx.category] = (acc[tx.category] || 0) + tx.amount;
@@ -733,7 +746,7 @@ function renderCategoryChart(items, month) {
 
 function renderSubcategoryChart(items, month) {
   const selectedCategories = getSelectedReportCategories();
-  const selectedType = reportTypeFilter.value;
+  const selectedType = getSelectedReportType();
   const filteredByType = filterByMonthAndType(items, month, selectedType);
   const filtered = selectedCategories.length
     ? filteredByType.filter((tx) => selectedCategories.includes(tx.category))
@@ -823,7 +836,7 @@ function renderMonthlyTrendChart(rows, tone = 'default') {
 }
 
 function renderMonthlyChart(items) {
-  const selectedType = reportTypeFilter.value;
+  const selectedType = getSelectedReportType();
   const rows = buildMonthlyRows(items, selectedType);
 
   const average = rows.length ? rows.reduce((acc, row) => acc + row.value, 0) / rows.length : 0;
@@ -1692,28 +1705,43 @@ async function refreshAppWithoutLosingData() {
 }
 
 
+function reportMissingElement(id, context) {
+  console.error(`[init] Elemento obrigatório ausente: #${id} (${context})`);
+}
+
 navTabs.forEach((tab) => {
   tab.addEventListener('click', () => {
     setActiveView(tab.dataset.navView);
   });
 });
 
-categoryForm.addEventListener('submit', (ev) => {
-  ev.preventDefault();
-  addCategoryAndSubcategory(
-    document.getElementById('new-category').value,
-    document.getElementById('new-subcategory').value,
-  );
-  categoryForm.reset();
-  syncCategoryOptions();
-  render();
-});
+if (categoryForm) {
+  categoryForm.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    addCategoryAndSubcategory(
+      document.getElementById('new-category').value,
+      document.getElementById('new-subcategory').value,
+    );
+    categoryForm.reset();
+    syncCategoryOptions();
+    render();
+  });
+} else {
+  reportMissingElement('category-form', 'cadastro de categorias');
+}
 
-reportCategoryFilter.addEventListener('change', () => {
-  syncReportCategoryDropdown();
-  render();
-});
-reportTypeFilter.addEventListener('change', render);
+if (reportCategoryFilter) {
+  reportCategoryFilter.addEventListener('change', () => {
+    syncReportCategoryDropdown();
+    render();
+  });
+}
+
+if (reportTypeFilter) {
+  reportTypeFilter.addEventListener('change', render);
+} else {
+  reportMissingElement('report-type-filter', 'filtro de tipo do dashboard');
+}
 
 if (reportCategoryToggle && reportCategoryDropdown) {
   reportCategoryToggle.addEventListener('click', () => {
@@ -1734,86 +1762,103 @@ if (reportCategoryToggle && reportCategoryDropdown) {
   });
 }
 
-recurringCheckbox.addEventListener('change', () => {
-  recurrenceFields.classList.toggle('hidden', !recurringCheckbox.checked);
-});
+if (recurringCheckbox && recurrenceFields) {
+  recurringCheckbox.addEventListener('change', () => {
+    recurrenceFields.classList.toggle('hidden', !recurringCheckbox.checked);
+  });
+}
 
-monthFilterInput.addEventListener('change', render);
+if (monthFilterInput) {
+  monthFilterInput.addEventListener('change', render);
+} else {
+  reportMissingElement('month-filter', 'filtro mensal');
+}
 
-editCategoryInput.addEventListener('change', () => {
-  syncEditSubcategories();
-  refreshEditImpact();
-});
-editForm.querySelectorAll('input[name="edit-scope"]').forEach((radio) => {
-  radio.addEventListener('change', refreshEditImpact);
-});
-editRecurrenceCountInput.addEventListener('input', refreshEditImpact);
-editDateInput.addEventListener('change', refreshEditImpact);
-cancelEditButton.addEventListener('click', closeEditModal);
+if (editCategoryInput) {
+  editCategoryInput.addEventListener('change', () => {
+    syncEditSubcategories();
+    refreshEditImpact();
+  });
+}
 
-editForm.addEventListener('submit', (ev) => {
-  ev.preventDefault();
-
-  const txId = editTxIdInput.value;
-  const scope = getSelectedEditScope();
-  const patch = {
-    type: editTypeInput.value,
-    category: editCategoryInput.value,
-    subcategory: editSubcategoryInput.value,
-    description: editDescriptionInput.value,
-    amount: editAmountInput.value,
-    date: editDateInput.value,
-  };
-
-  if (!normalizeText(patch.description) || !sanitizeAmount(patch.amount) || !isValidDateString(patch.date)) return;
-
-  const recurrenceCount = editRecurrenceCountInput.value ? Number(editRecurrenceCountInput.value) : undefined;
-  applyRecurringEdit({ txId, scope, patch, recurrenceCount });
-  closeEditModal();
-  render();
-});
-
-form.addEventListener('submit', (ev) => {
-  ev.preventDefault();
-  const descriptionValue = normalizeText(document.getElementById('description').value || '');
-  const autoDescription = descriptionValue || `${quickEntryState.subcategory || quickEntryState.category || 'Sem categoria'}`;
-
-  const baseTx = buildBaseTransaction({
-    type: quickEntryState.type,
-    category: quickEntryState.category,
-    subcategory: quickEntryState.subcategory,
-    description: autoDescription,
-    amount: document.getElementById('amount').value,
-    date: document.getElementById('date').value,
+if (editForm) {
+  editForm.querySelectorAll('input[name="edit-scope"]').forEach((radio) => {
+    radio.addEventListener('change', refreshEditImpact);
   });
 
-  const recurrenceConfig = recurringCheckbox.checked
-    ? {
-      enabled: true,
-      frequency: document.getElementById('recurrence-frequency').value,
-      count: Number(document.getElementById('recurrence-count').value || 12),
+  editForm.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+
+    const txId = editTxIdInput.value;
+    const scope = getSelectedEditScope();
+    const patch = {
+      type: editTypeInput.value,
+      category: editCategoryInput.value,
+      subcategory: editSubcategoryInput.value,
+      description: editDescriptionInput.value,
+      amount: editAmountInput.value,
+      date: editDateInput.value,
+    };
+
+    if (!normalizeText(patch.description) || !sanitizeAmount(patch.amount) || !isValidDateString(patch.date)) return;
+
+    const recurrenceCount = editRecurrenceCountInput.value ? Number(editRecurrenceCountInput.value) : undefined;
+    applyRecurringEdit({ txId, scope, patch, recurrenceCount });
+    closeEditModal();
+    render();
+  });
+} else {
+  reportMissingElement('edit-form', 'edição de lançamentos');
+}
+
+if (editRecurrenceCountInput) editRecurrenceCountInput.addEventListener('input', refreshEditImpact);
+if (editDateInput) editDateInput.addEventListener('change', refreshEditImpact);
+if (cancelEditButton) cancelEditButton.addEventListener('click', closeEditModal);
+
+if (form) {
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const descriptionValue = normalizeText(document.getElementById('description').value || '');
+    const autoDescription = descriptionValue || `${quickEntryState.subcategory || quickEntryState.category || 'Sem categoria'}`;
+
+    const baseTx = buildBaseTransaction({
+      type: quickEntryState.type,
+      category: quickEntryState.category,
+      subcategory: quickEntryState.subcategory,
+      description: autoDescription,
+      amount: document.getElementById('amount').value,
+      date: document.getElementById('date').value,
+    });
+
+    const recurrenceConfig = recurringCheckbox && recurringCheckbox.checked
+      ? {
+        enabled: true,
+        frequency: document.getElementById('recurrence-frequency').value,
+        count: Number(document.getElementById('recurrence-count').value || 12),
+      }
+      : null;
+
+    if (!baseTx.category || !baseTx.subcategory) {
+      window.alert('Selecione categoria e subcategoria.');
+      return;
     }
-    : null;
 
-  if (!baseTx.category || !baseTx.subcategory) {
-    window.alert('Selecione categoria e subcategoria.');
-    return;
-  }
+    addCategoryAndSubcategory(baseTx.category, baseTx.subcategory);
 
-  addCategoryAndSubcategory(baseTx.category, baseTx.subcategory);
+    if (!saveTransactionWithValidation(baseTx, recurrenceConfig)) {
+      window.alert('Preencha valor e data para salvar.');
+      return;
+    }
 
-  if (!saveTransactionWithValidation(baseTx, recurrenceConfig)) {
-    window.alert('Preencha valor e data para salvar.');
-    return;
-  }
-
-  form.reset();
-  recurrenceFields.classList.add('hidden');
-  syncCategoryOptions();
-  resetQuickEntry();
-  render();
-});
-
+    form.reset();
+    if (recurrenceFields) recurrenceFields.classList.add('hidden');
+    syncCategoryOptions();
+    resetQuickEntry();
+    render();
+  });
+} else {
+  reportMissingElement('tx-form', 'criação de lançamento');
+}
 
 quickEntryTypeButtons.forEach((button) => {
   button.addEventListener('click', () => {

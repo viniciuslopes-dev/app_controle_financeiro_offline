@@ -1,4 +1,4 @@
-const CACHE_NAME = 'finance-pwa-v3';
+const CACHE_NAME = 'finance-pwa-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -30,9 +30,23 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
 
-  if (request.mode === 'navigate') {
+  const requestURL = new URL(request.url);
+  const isAppShellAsset = request.mode === 'navigate'
+    || requestURL.pathname.endsWith('/index.html')
+    || requestURL.pathname.endsWith('/assets/js/app.js')
+    || requestURL.pathname.endsWith('/assets/css/styles.css');
+
+  if (isAppShellAsset) {
     event.respondWith(
-      fetch(request).catch(() => caches.match('./index.html')),
+      fetch(request)
+        .then((response) => {
+          if (response && response.ok) {
+            const cloned = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, cloned));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request).then((cached) => cached || caches.match('./index.html'))),
     );
     return;
   }
@@ -40,7 +54,13 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;
-      return fetch(request);
+      return fetch(request).then((response) => {
+        if (response && response.ok) {
+          const cloned = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, cloned));
+        }
+        return response;
+      });
     }),
   );
 });
