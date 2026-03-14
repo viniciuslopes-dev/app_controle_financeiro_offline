@@ -970,11 +970,17 @@ function renderFinancialKPIs(items, month) {
   const commitmentRate = s.income > 0 ? (outflow / s.income) * 100 : 0;
   const daysInMonth = getDaysInMonth(month);
   const daysElapsed = getDaysElapsed(month);
-  const dailyAvgSpending = daysElapsed > 0 ? outflow / daysElapsed : 0;
-  const projectedBalance = daysElapsed > 0 ? s.income - (dailyAvgSpending * daysInMonth) : s.balance;
+  const daysRemaining = Math.max(daysInMonth - daysElapsed, 1);
+  const today = new Date();
+  const todayMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const isPastMonth = month && month < todayMonth;
+  const availablePerDay = isPastMonth ? s.balance : s.balance / daysRemaining;
 
   const savingsStatus = getKPIStatus('savingsRate', savingsRate);
   const commitmentStatus = getKPIStatus('commitmentRate', commitmentRate);
+
+  const availableBadgeLabel = isPastMonth ? 'Encerrado' : `${daysRemaining} dias restantes`;
+  const availableBadgeClass = availablePerDay > 0 ? 'badge-status--normal' : 'badge-status--high';
 
   kpiEl.innerHTML = `<div class="kpi-grid">
     <div class="kpi-item">
@@ -993,17 +999,10 @@ function renderFinancialKPIs(items, month) {
     </div>
     <div class="kpi-item">
       <div>
-        <small>M\u00e9dia di\u00e1ria de gastos</small>
-        <strong>${formatMoney(dailyAvgSpending)}</strong>
+        <small>Dispon\u00edvel por dia</small>
+        <strong>${formatMoney(availablePerDay)}</strong>
       </div>
-      <span class="badge-status badge-status--normal">${daysElapsed}/${daysInMonth} dias</span>
-    </div>
-    <div class="kpi-item">
-      <div>
-        <small>Proje\u00e7\u00e3o de saldo mensal</small>
-        <strong>${formatMoney(projectedBalance)}</strong>
-      </div>
-      <span class="badge-status ${projectedBalance >= 0 ? 'badge-status--normal' : 'badge-status--high'}">${projectedBalance >= 0 ? 'Positivo' : 'Negativo'}</span>
+      <span class="badge-status ${availableBadgeClass}">${availableBadgeLabel}</span>
     </div>
   </div>`;
 }
