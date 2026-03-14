@@ -125,6 +125,10 @@ input:not([type="checkbox"]):not([type="radio"]), select {
   width: 100%;
   max-width: 100%;
 }
+
+#report-category-filter[multiple] {
+  min-height: 7.5rem;
+}
 button {
   border: 0;
   background: var(--primary);

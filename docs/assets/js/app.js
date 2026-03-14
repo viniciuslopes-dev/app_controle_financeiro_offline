@@ -164,11 +164,16 @@ function addCategoryAndSubcategory(categoryName, subcategoryName) {
 function syncCategoryOptions() {
   const categories = loadCategories();
   const categoryNames = Object.keys(categories).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const selectedReportCategories = Array.from(reportCategoryFilter.selectedOptions)
+    .map((option) => option.value)
+    .filter(Boolean);
 
   categoryInput.innerHTML = categoryNames.map((name) => `<option value="${name}">${name}</option>`).join('');
-  reportCategoryFilter.innerHTML = ['<option value="">Todas</option>']
-    .concat(categoryNames.map((name) => `<option value="${name}">${name}</option>`))
-    .join('');
+  reportCategoryFilter.innerHTML = categoryNames.map((name) => `<option value="${name}">${name}</option>`).join('');
+
+  Array.from(reportCategoryFilter.options).forEach((option) => {
+    option.selected = selectedReportCategories.includes(option.value);
+  });
 
   if (!categoryInput.value || !categories[categoryInput.value]) {
     categoryInput.value = categoryNames[0] || '';
@@ -687,11 +692,13 @@ function renderCategoryChart(items, month) {
 }
 
 function renderSubcategoryChart(items, month) {
-  const selectedCategory = reportCategoryFilter.value;
+  const selectedCategories = Array.from(reportCategoryFilter.selectedOptions)
+    .map((option) => option.value)
+    .filter(Boolean);
   const selectedType = reportTypeFilter.value;
   const filteredByType = filterByMonthAndType(items, month, selectedType);
-  const filtered = selectedCategory
-    ? filteredByType.filter((tx) => tx.category === selectedCategory)
+  const filtered = selectedCategories.length
+    ? filteredByType.filter((tx) => selectedCategories.includes(tx.category))
     : filteredByType;
 
   const bySubcategory = filtered.reduce((acc, tx) => {
@@ -705,10 +712,13 @@ function renderSubcategoryChart(items, month) {
     .sort((a, b) => b.value - a.value);
 
   const tone = selectedType === 'income' ? 'income' : selectedType === 'all' ? 'default' : 'outflow';
+  const emptyLabelContext = selectedCategories.length
+    ? ` nas categorias selecionadas para ${getTypeLabel(selectedType).toLowerCase()} neste filtro.`
+    : ` para ${getTypeLabel(selectedType).toLowerCase()} neste filtro.`;
   renderBars(
     subcategoryChartEl,
     rows,
-    `Sem subcategorias para ${getTypeLabel(selectedType).toLowerCase()} neste filtro.`,
+    `Sem subcategorias${emptyLabelContext}`,
     { tone, scaleMode: 'total' },
   );
 }
