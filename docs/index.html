@@ -42,9 +42,7 @@
 
       <section class="card" data-view="home">
         <h2>Novo lançamento</h2>
-        <section id="quick-entry" class="quick-entry" aria-label="Lançamento rápido">
-          <h3>Lançamento rápido</h3>
-
+        <form id="tx-form" class="unified-form">
           <div class="quick-type-buttons" role="group" aria-label="Tipo de lançamento">
             <button type="button" class="quick-type-btn" data-type="expense">Despesa</button>
             <button type="button" class="quick-type-btn" data-type="income">Receita</button>
@@ -52,64 +50,32 @@
             <button type="button" class="quick-type-btn" data-type="goal">Meta</button>
           </div>
 
+          <input id="type" type="hidden" value="expense" />
+
           <section class="quick-selection-group quick-selection-group--category" aria-label="Escolha de categoria">
-            <p class="quick-selection-title">1. Categoria</p>
+            <p class="quick-selection-title">Categoria</p>
             <div id="quick-category-grid" class="quick-category-grid" aria-label="Categorias"></div>
           </section>
 
           <section class="quick-selection-group quick-selection-group--subcategory" aria-label="Escolha de subcategoria">
-            <p id="quick-subcategory-title" class="quick-selection-title">2. Subcategoria</p>
+            <p id="quick-subcategory-title" class="quick-selection-title">Subcategoria</p>
             <div id="quick-subcategory-grid" class="quick-subcategory-grid" aria-label="Subcategorias"></div>
           </section>
 
           <div class="quick-inputs">
             <label>
-              Valor rápido
-              <input id="quick-amount" type="number" min="0" step="0.01" placeholder="0,00" />
+              Valor
+              <input id="amount" type="number" min="0" step="0.01" required placeholder="0,00" />
             </label>
             <label>
               Data
-              <input id="quick-date" type="date" />
+              <input id="date" type="date" required />
             </label>
           </div>
 
-          <button id="quick-save" type="button" class="quick-save-btn">Salvar rápido</button>
-        </section>
-
-        <form id="tx-form">
           <label>
-            Tipo
-            <select id="type" required>
-              <option value="income">Receita</option>
-              <option value="expense" selected>Despesa</option>
-              <option value="investment">Investimento</option>
-              <option value="goal">Meta</option>
-            </select>
-          </label>
-
-          <label>
-            Categoria
-            <select id="category" required></select>
-          </label>
-
-          <label>
-            Subcategoria
-            <select id="subcategory" required></select>
-          </label>
-
-          <label>
-            Descrição
-            <input id="description" required maxlength="120" placeholder="Ex.: Conta de luz" />
-          </label>
-
-          <label>
-            Valor
-            <input id="amount" type="number" min="0" step="0.01" required placeholder="0,00" />
-          </label>
-
-          <label>
-            Data
-            <input id="date" type="date" required />
+            Descrição (opcional)
+            <input id="description" maxlength="120" placeholder="Ex.: Conta de luz" />
           </label>
 
           <label class="inline">
@@ -132,7 +98,7 @@
             </label>
           </div>
 
-          <button type="submit">Salvar</button>
+          <button type="submit" class="quick-save-btn">Salvar</button>
         </form>
       </section>
 

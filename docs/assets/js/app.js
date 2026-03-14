@@ -26,8 +26,6 @@ const monthlyTrendChartEl = document.getElementById('monthly-trend-chart');
 const dashboardInsightsEl = document.getElementById('dashboard-insights');
 const dateInput = document.getElementById('date');
 const monthFilterInput = document.getElementById('month-filter');
-const categoryInput = document.getElementById('category');
-const subcategoryInput = document.getElementById('subcategory');
 const reportCategoryFilter = document.getElementById('report-category-filter');
 const reportCategoryDropdown = document.getElementById('report-category-dropdown');
 const reportCategoryToggle = document.getElementById('report-category-toggle');
@@ -66,16 +64,12 @@ const quickEntryTypeButtons = document.querySelectorAll('.quick-type-btn');
 const quickCategoryGrid = document.getElementById('quick-category-grid');
 const quickSubcategoryGrid = document.getElementById('quick-subcategory-grid');
 const quickSubcategoryTitle = document.getElementById('quick-subcategory-title');
-const quickAmountInput = document.getElementById('quick-amount');
-const quickDateInput = document.getElementById('quick-date');
-const quickSaveButton = document.getElementById('quick-save');
+const typeHiddenInput = document.getElementById('type');
 
 const quickEntryState = {
   type: 'expense',
   category: '',
   subcategory: '',
-  amount: '',
-  date: '',
 };
 
 const editModal = document.getElementById('edit-modal');
@@ -105,14 +99,11 @@ function getLocalCurrentMonthISO() {
 
 function applyEntryDefaults() {
   const today = getLocalTodayISO();
-  const typeInput = document.getElementById('type');
 
-  if (typeInput) typeInput.value = DEFAULT_ENTRY_TYPE;
+  if (typeHiddenInput) typeHiddenInput.value = DEFAULT_ENTRY_TYPE;
   if (dateInput) dateInput.value = today;
-  if (quickDateInput) quickDateInput.value = today;
 
   quickEntryState.type = DEFAULT_ENTRY_TYPE;
-  quickEntryState.date = today;
 }
 
 applyEntryDefaults();
@@ -169,32 +160,15 @@ function syncCategoryOptions() {
   const categoryNames = Object.keys(categories).sort((a, b) => a.localeCompare(b, 'pt-BR'));
   const selectedReportCategories = getSelectedReportCategories();
 
-  categoryInput.innerHTML = categoryNames.map((name) => `<option value="${name}">${name}</option>`).join('');
   reportCategoryFilter.innerHTML = categoryNames.map((name) => `<option value="${name}">${name}</option>`).join('');
 
   Array.from(reportCategoryFilter.options).forEach((option) => {
     option.selected = selectedReportCategories.includes(option.value);
   });
 
-  if (!categoryInput.value || !categories[categoryInput.value]) {
-    categoryInput.value = categoryNames[0] || '';
-  }
-
-  syncSubcategoryOptions();
   syncQuickEntryOptions();
   syncReportCategoryDropdown();
   renderCategoryList();
-}
-
-function syncSubcategoryOptions() {
-  const categories = loadCategories();
-  const selectedCategory = categoryInput.value;
-  const subs = categories[selectedCategory] || [];
-
-  subcategoryInput.innerHTML = subs.map((name) => `<option value="${name}">${name}</option>`).join('');
-  if (!subcategoryInput.value || !subs.includes(subcategoryInput.value)) {
-    subcategoryInput.value = subs[0] || '';
-  }
 }
 
 function syncEditSubcategories() {
@@ -1614,15 +1588,6 @@ function saveTransactionWithValidation(baseTx, recurrenceConfig = null) {
   return true;
 }
 
-function syncQuickEntryFromForm() {
-  if (!quickEntryTypeButtons.length) return;
-  quickEntryState.type = document.getElementById('type').value || quickEntryState.type;
-  quickEntryState.category = normalizeText(categoryInput.value || '');
-  quickEntryState.subcategory = normalizeText(subcategoryInput.value || '');
-  quickEntryState.amount = '';
-  quickEntryState.date = dateInput.value;
-}
-
 function renderQuickTypeButtons() {
   if (!quickEntryTypeButtons.length) return;
   quickEntryTypeButtons.forEach((button) => {
@@ -1640,8 +1605,8 @@ function renderQuickSubcategoryGrid() {
 
   if (quickSubcategoryTitle) {
     quickSubcategoryTitle.textContent = selectedCategory
-      ? `2. Subcategoria de ${selectedCategory}`
-      : '2. Subcategoria';
+      ? `Subcategoria de ${selectedCategory}`
+      : 'Subcategoria';
   }
 
   if (!selectedSubs.length) {
@@ -1656,9 +1621,6 @@ function renderQuickSubcategoryGrid() {
   quickSubcategoryGrid.querySelectorAll('[data-subcategory]').forEach((button) => {
     button.addEventListener('click', () => {
       quickEntryState.subcategory = button.dataset.subcategory || '';
-      if (quickEntryState.subcategory) {
-        subcategoryInput.value = quickEntryState.subcategory;
-      }
       renderQuickSubcategoryGrid();
     });
   });
@@ -1682,15 +1644,8 @@ function renderQuickCategoryGrid() {
   quickCategoryGrid.querySelectorAll('[data-category]').forEach((button) => {
     button.addEventListener('click', () => {
       quickEntryState.category = button.dataset.category || '';
-      if (quickEntryState.category) {
-        categoryInput.value = quickEntryState.category;
-        syncSubcategoryOptions();
-      }
       const subs = categories[quickEntryState.category] || [];
       quickEntryState.subcategory = subs[0] || '';
-      if (quickEntryState.subcategory) {
-        subcategoryInput.value = quickEntryState.subcategory;
-      }
       renderQuickCategoryGrid();
       renderQuickSubcategoryGrid();
     });
@@ -1718,9 +1673,8 @@ function syncQuickEntryOptions() {
 }
 
 function resetQuickEntry() {
-  quickEntryState.amount = '';
   applyEntryDefaults();
-  if (quickAmountInput) quickAmountInput.value = '';
+  syncQuickEntryOptions();
 }
 
 async function refreshAppWithoutLosingData() {
@@ -1755,11 +1709,6 @@ categoryForm.addEventListener('submit', (ev) => {
   render();
 });
 
-categoryInput.addEventListener('change', () => {
-  syncSubcategoryOptions();
-  syncQuickEntryFromForm();
-  syncQuickEntryOptions();
-});
 reportCategoryFilter.addEventListener('change', () => {
   syncReportCategoryDropdown();
   render();
@@ -1826,11 +1775,14 @@ editForm.addEventListener('submit', (ev) => {
 
 form.addEventListener('submit', (ev) => {
   ev.preventDefault();
+  const descriptionValue = normalizeText(document.getElementById('description').value || '');
+  const autoDescription = descriptionValue || `${quickEntryState.subcategory || quickEntryState.category || 'Sem categoria'}`;
+
   const baseTx = buildBaseTransaction({
-    type: document.getElementById('type').value,
-    category: categoryInput.value,
-    subcategory: subcategoryInput.value,
-    description: document.getElementById('description').value,
+    type: quickEntryState.type,
+    category: quickEntryState.category,
+    subcategory: quickEntryState.subcategory,
+    description: autoDescription,
     amount: document.getElementById('amount').value,
     date: document.getElementById('date').value,
   });
@@ -1843,13 +1795,21 @@ form.addEventListener('submit', (ev) => {
     }
     : null;
 
-  if (!saveTransactionWithValidation(baseTx, recurrenceConfig)) return;
+  if (!baseTx.category || !baseTx.subcategory) {
+    window.alert('Selecione categoria e subcategoria.');
+    return;
+  }
+
+  addCategoryAndSubcategory(baseTx.category, baseTx.subcategory);
+
+  if (!saveTransactionWithValidation(baseTx, recurrenceConfig)) {
+    window.alert('Preencha valor e data para salvar.');
+    return;
+  }
 
   form.reset();
   recurrenceFields.classList.add('hidden');
-  dateInput.value = getLocalTodayISO();
   syncCategoryOptions();
-  syncQuickEntryFromForm();
   resetQuickEntry();
   render();
 });
@@ -1858,49 +1818,10 @@ form.addEventListener('submit', (ev) => {
 quickEntryTypeButtons.forEach((button) => {
   button.addEventListener('click', () => {
     quickEntryState.type = button.dataset.type || 'expense';
-    const typeSelect = document.getElementById('type');
-    if (typeSelect) typeSelect.value = quickEntryState.type;
+    if (typeHiddenInput) typeHiddenInput.value = quickEntryState.type;
     renderQuickTypeButtons();
   });
 });
-
-if (quickAmountInput) {
-  quickAmountInput.addEventListener('input', () => {
-    quickEntryState.amount = quickAmountInput.value;
-  });
-}
-
-if (quickDateInput) {
-  quickDateInput.addEventListener('input', () => {
-    quickEntryState.date = quickDateInput.value;
-  });
-}
-
-if (quickSaveButton) {
-  quickSaveButton.addEventListener('click', () => {
-    const fallbackCategory = normalizeText(categoryInput.value || '');
-    const fallbackSubcategory = normalizeText(subcategoryInput.value || '');
-    const baseTx = buildBaseTransaction({
-      type: quickEntryState.type,
-      category: quickEntryState.category || fallbackCategory,
-      subcategory: quickEntryState.subcategory || fallbackSubcategory,
-      description: `Lançamento rápido • ${quickEntryState.subcategory || quickEntryState.category || 'Sem categoria'}`,
-      amount: (quickAmountInput && quickAmountInput.value) || quickEntryState.amount,
-      date: (quickDateInput && quickDateInput.value) || quickEntryState.date,
-    });
-
-    addCategoryAndSubcategory(baseTx.category, baseTx.subcategory);
-
-    if (!saveTransactionWithValidation(baseTx, null)) {
-      window.alert('Preencha valor, data e selecione categoria/subcategoria para salvar rapidamente.');
-      return;
-    }
-
-    syncCategoryOptions();
-    resetQuickEntry();
-    render();
-  });
-}
 
 if (refreshAppButton) {
   refreshAppButton.addEventListener('click', () => {
@@ -1956,7 +1877,6 @@ const txs = loadTransactions();
 if (migrateRecurringSeriesData(txs)) {
   saveTransactions(txs);
 }
-syncQuickEntryFromForm();
 syncCategoryOptions();
 resetQuickEntry();
 setActiveView(activeView);
