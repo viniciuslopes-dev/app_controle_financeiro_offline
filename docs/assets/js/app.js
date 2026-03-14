@@ -2,6 +2,7 @@ const STORAGE_KEY = 'finance_offline_transactions_v2';
 const LEGACY_STORAGE_KEY = 'finance_offline_transactions_v1';
 const CATEGORY_STORAGE_KEY = 'finance_offline_categories_v1';
 const SESSION_STORAGE_KEY = 'finance_offline_session_v1';
+const REMOTE_BACKUP_STORAGE_PREFIX = 'finance_offline_remote_backup_v1:';
 
 const DEFAULT_CATEGORIES = {
   Moradia: ['Aluguel', 'Luz', 'Água', 'Internet'],
@@ -487,6 +488,59 @@ function buildBackupPayload() {
   };
 }
 
+function getRemoteBackupStorageKey(userId) {
+  return `${REMOTE_BACKUP_STORAGE_PREFIX}${normalizeText(String(userId || '')).toLowerCase()}`;
+}
+
+async function uploadBackupForUser(userId, payload) {
+  const normalizedUserId = normalizeText(String(userId || ''));
+  if (!normalizedUserId) {
+    return { ok: false, message: 'Usuário inválido para upload de backup.' };
+  }
+
+  const validation = validateBackupPayload(payload);
+  if (!validation.valid) {
+    return { ok: false, message: validation.message };
+  }
+
+  localStorage.setItem(getRemoteBackupStorageKey(normalizedUserId), JSON.stringify({
+    savedAt: new Date().toISOString(),
+    payload,
+  }));
+
+  return { ok: true };
+}
+
+async function downloadBackupForUser(userId) {
+  const normalizedUserId = normalizeText(String(userId || ''));
+  if (!normalizedUserId) {
+    return { ok: false, message: 'Usuário inválido para download de backup.' };
+  }
+
+  const raw = localStorage.getItem(getRemoteBackupStorageKey(normalizedUserId));
+  if (!raw) {
+    return { ok: true, found: false };
+  }
+
+  try {
+    const remoteRecord = JSON.parse(raw);
+    const payload = remoteRecord && remoteRecord.payload ? remoteRecord.payload : remoteRecord;
+    const validation = validateBackupPayload(payload);
+    if (!validation.valid) {
+      return { ok: false, message: validation.message };
+    }
+
+    return {
+      ok: true,
+      found: true,
+      payload,
+      savedAt: remoteRecord && remoteRecord.savedAt ? remoteRecord.savedAt : null,
+    };
+  } catch {
+    return { ok: false, message: 'Backup remoto inválido ou corrompido.' };
+  }
+}
+
 function downloadBackupFile(payload) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -538,7 +592,7 @@ function normalizeImportedCategories(categories) {
   return normalized;
 }
 
-function importBackupPayload(payload) {
+function applyBackupPayload(payload) {
   const categories = normalizeImportedCategories(payload.categories || {});
   const transactions = payload.transactions.map((tx) => sanitizeTransaction(tx)).filter(Boolean);
 
@@ -550,11 +604,7 @@ function importBackupPayload(payload) {
   });
 
   if (!transactions.length) {
-    return { ok: false, message: 'Nenhum lançamento válido foi encontrado no arquivo.' };
-  }
-
-  if (!window.confirm('Importar backup irá substituir os dados atuais. Deseja continuar?')) {
-    return { ok: false, cancelled: true };
+    return { ok: false, message: 'Nenhum lançamento válido foi encontrado no backup.' };
   }
 
   if (migrateRecurringSeriesData(transactions)) {
@@ -567,6 +617,112 @@ function importBackupPayload(payload) {
   render();
 
   return { ok: true, importedCount: transactions.length };
+}
+
+function mergeBackupPayloads(localPayload, remotePayload) {
+  const categories = normalizeImportedCategories({
+    ...(localPayload.categories || {}),
+    ...(remotePayload.categories || {}),
+  });
+
+  Object.entries(localPayload.categories || {}).forEach(([category, subcategories]) => {
+    if (!categories[category]) categories[category] = [];
+    if (Array.isArray(subcategories)) {
+      subcategories.forEach((subcategory) => {
+        if (!categories[category].includes(subcategory)) categories[category].push(subcategory);
+      });
+    }
+  });
+
+  Object.entries(remotePayload.categories || {}).forEach(([category, subcategories]) => {
+    if (!categories[category]) categories[category] = [];
+    if (Array.isArray(subcategories)) {
+      subcategories.forEach((subcategory) => {
+        if (!categories[category].includes(subcategory)) categories[category].push(subcategory);
+      });
+    }
+  });
+
+  const mergedMap = new Map();
+  [...(localPayload.transactions || []), ...(remotePayload.transactions || [])]
+    .map((tx) => sanitizeTransaction(tx))
+    .filter(Boolean)
+    .forEach((tx) => {
+      mergedMap.set(tx.id, tx);
+      if (!categories[tx.category]) categories[tx.category] = [];
+      if (!categories[tx.category].includes(tx.subcategory)) categories[tx.category].push(tx.subcategory);
+    });
+
+  return {
+    version: '1.0',
+    exportedAt: new Date().toISOString(),
+    transactions: Array.from(mergedMap.values()),
+    categories,
+  };
+}
+
+function importBackupPayload(payload) {
+  if (!window.confirm('Importar backup irá substituir os dados atuais. Deseja continuar?')) {
+    return { ok: false, cancelled: true };
+  }
+
+  return applyBackupPayload(payload);
+}
+
+async function handleRemoteBackupOnSignIn(userId) {
+  const remoteResult = await downloadBackupForUser(userId);
+  if (!remoteResult.ok) {
+    window.alert(remoteResult.message || 'Não foi possível baixar o backup remoto da conta.');
+    return;
+  }
+
+  if (!remoteResult.found) {
+    const uploadResult = await uploadBackupForUser(userId, buildBackupPayload());
+    if (!uploadResult.ok) {
+      window.alert(uploadResult.message || 'Não foi possível enviar o backup local para a conta.');
+    }
+    return;
+  }
+
+  const remoteDate = remoteResult.savedAt ? `\nÚltimo backup remoto: ${new Date(remoteResult.savedAt).toLocaleString('pt-BR')}` : '';
+  const choice = window.prompt(
+    `Encontramos um backup salvo nesta conta.${remoteDate}\n\nEscolha como continuar:\n1 - Usar dados locais\n2 - Restaurar backup da conta\n3 - Mesclar local + conta`,
+    '1',
+  );
+
+  const normalizedChoice = String(choice || '1').trim();
+  if (normalizedChoice === '2') {
+    const applyResult = applyBackupPayload(remoteResult.payload);
+    if (!applyResult.ok) {
+      window.alert(applyResult.message || 'Não foi possível restaurar o backup da conta.');
+      return;
+    }
+    window.alert(`Backup da conta restaurado com sucesso (${applyResult.importedCount} lançamento(s)).`);
+    return;
+  }
+
+  if (normalizedChoice === '3') {
+    const mergedPayload = mergeBackupPayloads(buildBackupPayload(), remoteResult.payload);
+    const applyResult = applyBackupPayload(mergedPayload);
+    if (!applyResult.ok) {
+      window.alert(applyResult.message || 'Não foi possível mesclar os dados local + conta.');
+      return;
+    }
+
+    const uploadResult = await uploadBackupForUser(userId, mergedPayload);
+    if (!uploadResult.ok) {
+      window.alert(uploadResult.message || 'Mescla aplicada localmente, mas falhou ao atualizar backup remoto.');
+      return;
+    }
+
+    window.alert(`Mescla concluída com sucesso (${applyResult.importedCount} lançamento(s)).`);
+    return;
+  }
+
+  const uploadResult = await uploadBackupForUser(userId, buildBackupPayload());
+  if (!uploadResult.ok) {
+    window.alert(uploadResult.message || 'Você manteve os dados locais, mas não foi possível atualizá-los na conta.');
+  }
 }
 
 function formatMoney(value) {
@@ -2144,6 +2300,7 @@ if (sessionForm) {
     }
 
     renderSessionState();
+    await handleRemoteBackupOnSignIn(result.user.identifier);
   });
 }
 
