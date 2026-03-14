@@ -27,6 +27,9 @@ const dashboardInsightsEl = document.getElementById('dashboard-insights');
 const dateInput = document.getElementById('date');
 const monthFilterInput = document.getElementById('month-filter');
 const reportCategoryFilter = document.getElementById('report-category-filter');
+const reportCategoryDropdown = document.getElementById('report-category-dropdown');
+const reportCategoryToggle = document.getElementById('report-category-toggle');
+const reportCategoryOptions = document.getElementById('report-category-options');
 const reportTypeFilter = document.getElementById('report-type-filter');
 const recurringCheckbox = document.getElementById('is-recurring');
 const recurrenceFields = document.getElementById('recurrence-fields');
@@ -155,12 +158,16 @@ function addCategoryAndSubcategory(categoryName, subcategoryName) {
 function syncCategoryOptions() {
   const categories = loadCategories();
   const categoryNames = Object.keys(categories).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const selectedReportCategories = getSelectedReportCategories();
 
-  reportCategoryFilter.innerHTML = ['<option value="">Todas</option>']
-    .concat(categoryNames.map((name) => `<option value="${name}">${name}</option>`))
-    .join('');
+  reportCategoryFilter.innerHTML = categoryNames.map((name) => `<option value="${name}">${name}</option>`).join('');
+
+  Array.from(reportCategoryFilter.options).forEach((option) => {
+    option.selected = selectedReportCategories.includes(option.value);
+  });
 
   syncQuickEntryOptions();
+  syncReportCategoryDropdown();
   renderCategoryList();
 }
 
@@ -171,6 +178,70 @@ function syncEditSubcategories() {
   if (!subs.includes(editSubcategoryInput.value)) {
     editSubcategoryInput.value = subs[0] || '';
   }
+}
+
+function getSelectedReportCategories() {
+  return Array.from(reportCategoryFilter.selectedOptions)
+    .map((option) => option.value)
+    .filter(Boolean);
+}
+
+function updateReportCategoryToggleLabel() {
+  if (!reportCategoryToggle) return;
+  const selected = getSelectedReportCategories();
+  if (!selected.length) {
+    reportCategoryToggle.textContent = 'Todas as categorias';
+    return;
+  }
+
+  if (selected.length <= 2) {
+    reportCategoryToggle.textContent = selected.join(', ');
+    return;
+  }
+
+  reportCategoryToggle.textContent = `${selected.length} categorias selecionadas`;
+}
+
+function renderReportCategoryDropdownOptions() {
+  if (!reportCategoryOptions) return;
+
+  const selected = new Set(getSelectedReportCategories());
+  reportCategoryOptions.innerHTML = Array.from(reportCategoryFilter.options)
+    .map((option) => `
+      <label class="multi-dropdown__option">
+        <input type="checkbox" value="${option.value}" ${selected.has(option.value) ? 'checked' : ''} />
+        <span>${option.value}</span>
+      </label>
+    `)
+    .join('');
+
+  reportCategoryOptions.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      const selectedValues = new Set(
+        Array.from(reportCategoryOptions.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value),
+      );
+
+      Array.from(reportCategoryFilter.options).forEach((option) => {
+        option.selected = selectedValues.has(option.value);
+      });
+
+      updateReportCategoryToggleLabel();
+      render();
+    });
+  });
+}
+
+function setReportCategoryDropdownOpen(open) {
+  if (!reportCategoryDropdown || !reportCategoryToggle || !reportCategoryOptions) return;
+
+  reportCategoryDropdown.dataset.open = String(open);
+  reportCategoryToggle.setAttribute('aria-expanded', String(open));
+  reportCategoryOptions.classList.toggle('hidden', !open);
+}
+
+function syncReportCategoryDropdown() {
+  updateReportCategoryToggleLabel();
+  renderReportCategoryDropdownOptions();
 }
 
 function renderCategoryList() {
@@ -661,11 +732,11 @@ function renderCategoryChart(items, month) {
 }
 
 function renderSubcategoryChart(items, month) {
-  const selectedCategory = reportCategoryFilter.value;
+  const selectedCategories = getSelectedReportCategories();
   const selectedType = reportTypeFilter.value;
   const filteredByType = filterByMonthAndType(items, month, selectedType);
-  const filtered = selectedCategory
-    ? filteredByType.filter((tx) => tx.category === selectedCategory)
+  const filtered = selectedCategories.length
+    ? filteredByType.filter((tx) => selectedCategories.includes(tx.category))
     : filteredByType;
 
   const bySubcategory = filtered.reduce((acc, tx) => {
@@ -679,10 +750,13 @@ function renderSubcategoryChart(items, month) {
     .sort((a, b) => b.value - a.value);
 
   const tone = selectedType === 'income' ? 'income' : selectedType === 'all' ? 'default' : 'outflow';
+  const emptyLabelContext = selectedCategories.length
+    ? ` nas categorias selecionadas para ${getTypeLabel(selectedType).toLowerCase()} neste filtro.`
+    : ` para ${getTypeLabel(selectedType).toLowerCase()} neste filtro.`;
   renderBars(
     subcategoryChartEl,
     rows,
-    `Sem subcategorias para ${getTypeLabel(selectedType).toLowerCase()} neste filtro.`,
+    `Sem subcategorias${emptyLabelContext}`,
     { tone, scaleMode: 'total' },
   );
 }
@@ -1635,8 +1709,30 @@ categoryForm.addEventListener('submit', (ev) => {
   render();
 });
 
-reportCategoryFilter.addEventListener('change', render);
+reportCategoryFilter.addEventListener('change', () => {
+  syncReportCategoryDropdown();
+  render();
+});
 reportTypeFilter.addEventListener('change', render);
+
+if (reportCategoryToggle && reportCategoryDropdown) {
+  reportCategoryToggle.addEventListener('click', () => {
+    const isOpen = reportCategoryDropdown.dataset.open === 'true';
+    setReportCategoryDropdownOpen(!isOpen);
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!reportCategoryDropdown.contains(event.target)) {
+      setReportCategoryDropdownOpen(false);
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      setReportCategoryDropdownOpen(false);
+    }
+  });
+}
 
 recurringCheckbox.addEventListener('change', () => {
   recurrenceFields.classList.toggle('hidden', !recurringCheckbox.checked);
