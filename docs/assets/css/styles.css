@@ -487,18 +487,9 @@ button {
 }
 
 
-.quick-entry {
+.unified-form {
   display: grid;
   gap: .75rem;
-  margin-bottom: 1rem;
-  padding: .85rem;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--card) 82%, var(--bg));
-}
-
-.quick-entry h3 {
-  margin: 0;
 }
 
 .quick-type-buttons {
@@ -572,7 +563,7 @@ button {
   min-width: 0;
 }
 
-#quick-amount {
+#amount {
   font-size: 1.15rem;
   font-weight: 700;
 }
