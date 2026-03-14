@@ -616,11 +616,16 @@ function renderBars(
   const total = rows.reduce((acc, row) => acc + row.value, 0);
   const headerValue = summaryValue === undefined || summaryValue === null ? total : summaryValue;
   const maxValue = Math.max(...rows.map((r) => r.value), 1);
+  const deltaDirectionValue = !delta
+    ? null
+    : typeof delta.directionValue === 'number'
+      ? delta.directionValue
+      : delta.percent;
   const deltaClass = !delta || delta.percent === null
     ? 'chart-delta--neutral'
-    : delta.percent > 0
+    : deltaDirectionValue > 0
       ? 'chart-delta--positive'
-      : delta.percent < 0
+      : deltaDirectionValue < 0
         ? 'chart-delta--negative'
         : 'chart-delta--neutral';
   const deltaText = !delta
@@ -666,6 +671,33 @@ function getMonthOverMonthDelta(items, selectedMonth, type) {
   };
 }
 
+function getNetFlowMonthOverMonthDelta(items, selectedMonth) {
+  if (!selectedMonth) return null;
+
+  const previousMonth = getPreviousMonth(selectedMonth);
+  if (!previousMonth) return null;
+
+  const currentItems = filterByMonth(items, selectedMonth);
+  const previousItems = filterByMonth(items, previousMonth);
+
+  const currentSummary = computeSummary(currentItems);
+  const previousSummary = computeSummary(previousItems);
+
+  const currentNet = currentSummary.income - (currentSummary.expense + currentSummary.investment + currentSummary.goal);
+  const previousNet = previousSummary.income - (previousSummary.expense + previousSummary.investment + previousSummary.goal);
+
+  const absolute = currentNet - previousNet;
+  const percent = previousNet !== 0 ? (absolute / Math.abs(previousNet)) * 100 : null;
+
+  return {
+    absolute,
+    percent,
+    absoluteLabel: `${absolute >= 0 ? '+' : '-'}${formatMoney(Math.abs(absolute))}`,
+    percentLabel: percent === null ? 'sem base no mês anterior' : `${percent >= 0 ? '+' : ''}${formatPercent(percent)}%`,
+    directionValue: absolute,
+  };
+}
+
 function renderInflowOutflowChart(items, month) {
   const monthItems = filterByMonth(items, month);
   const summary = computeSummary(monthItems);
@@ -691,7 +723,7 @@ function renderInflowOutflowChart(items, month) {
     }
   }
 
-  const delta = getMonthOverMonthDelta(items, month, 'outflow');
+  const delta = getNetFlowMonthOverMonthDelta(items, month);
 
   renderBars(inflowOutflowChartEl, rows, 'Sem dados de entradas e sa\u00eddas para o per\u00edodo selecionado.', {
     summaryLabel: 'Diferen\u00e7a (Entradas - Sa\u00eddas)',
