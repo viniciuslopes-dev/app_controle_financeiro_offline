@@ -10,6 +10,7 @@ const DEFAULT_CATEGORIES = {
 
 const FALLBACK_CATEGORY = 'Geral';
 const FALLBACK_SUBCATEGORY = 'Outros';
+const DEFAULT_ENTRY_TYPE = 'expense';
 
 const form = document.getElementById('tx-form');
 const categoryForm = document.getElementById('category-form');
@@ -75,10 +76,20 @@ function getLocalCurrentMonthISO() {
   return getLocalTodayISO().slice(0, 7);
 }
 
-dateInput.value = getLocalTodayISO();
+function applyEntryDefaults() {
+  const today = getLocalTodayISO();
+  const typeInput = document.getElementById('type');
+
+  if (typeInput) typeInput.value = DEFAULT_ENTRY_TYPE;
+  if (dateInput) dateInput.value = today;
+  if (quickDateInput) quickDateInput.value = today;
+
+  quickEntryState.type = DEFAULT_ENTRY_TYPE;
+  quickEntryState.date = today;
+}
+
+applyEntryDefaults();
 monthFilterInput.value = getLocalCurrentMonthISO();
-if (quickDateInput) quickDateInput.value = dateInput.value;
-quickEntryState.date = dateInput.value;
 
 function loadCategories() {
   try {
@@ -1209,9 +1220,8 @@ function syncQuickEntryOptions() {
 
 function resetQuickEntry() {
   quickEntryState.amount = '';
-  quickEntryState.date = getLocalTodayISO();
+  applyEntryDefaults();
   if (quickAmountInput) quickAmountInput.value = '';
-  if (quickDateInput) quickDateInput.value = quickEntryState.date;
 }
 
 async function refreshAppWithoutLosingData() {
