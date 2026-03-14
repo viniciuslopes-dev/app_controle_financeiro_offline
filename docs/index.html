@@ -14,8 +14,17 @@
       <p>Sem login • dados locais • instalável</p>
     </header>
 
+    <nav class="main-nav" aria-label="Navegação principal">
+      <div class="main-nav__tabs" role="tablist" aria-label="Módulos do aplicativo">
+        <button type="button" class="main-nav__tab active" data-nav-view="home" role="tab" aria-selected="true">Início (Lançamento)</button>
+        <button type="button" class="main-nav__tab" data-nav-view="dashboard" role="tab" aria-selected="false">Painel (Resumo + Gráficos)</button>
+        <button type="button" class="main-nav__tab" data-nav-view="history" role="tab" aria-selected="false">Histórico (Lançamentos)</button>
+        <button type="button" class="main-nav__tab" data-nav-view="more" role="tab" aria-selected="false">Mais (Cadastros + Backup + Manutenção)</button>
+      </div>
+    </nav>
+
     <main>
-      <section class="card">
+      <section class="card" data-view="more">
         <h2>Categorias e subcategorias</h2>
         <form id="category-form" class="nested-grid">
           <label>
@@ -31,7 +40,7 @@
         <ul id="category-list" class="category-list"></ul>
       </section>
 
-      <section class="card">
+      <section class="card" data-view="home">
         <h2>Novo lançamento</h2>
         <section id="quick-entry" class="quick-entry" aria-label="Lançamento rápido">
           <h3>Lançamento rápido</h3>
@@ -127,7 +136,7 @@
         </form>
       </section>
 
-      <section class="card">
+      <section class="card" data-view="dashboard">
         <h2>Resumo</h2>
         <label>
           Mês de referência
@@ -136,7 +145,7 @@
         <div id="summary" class="summary-grid"></div>
       </section>
 
-      <section class="card">
+      <section class="card" data-view="dashboard">
         <h2>Gráficos</h2>
         <h3>Composição por tipo (mês selecionado)</h3>
         <div id="type-composition-chart" class="bar-chart"></div>
@@ -170,12 +179,12 @@
         <div id="monthly-chart" class="bar-chart"></div>
       </section>
 
-      <section class="card">
+      <section class="card" data-view="history">
         <h2>Lançamentos</h2>
         <ul id="tx-list"></ul>
       </section>
 
-      <section class="card">
+      <section class="card" data-view="more">
         <h2>Backup e restauração</h2>
         <p>Baixe um arquivo com seus lançamentos para abrir em outro computador ou celular.</p>
         <div class="backup-actions">
@@ -189,7 +198,7 @@
         </div>
       </section>
 
-      <section class="card">
+      <section class="card" data-view="more">
         <h2>Manutenção</h2>
         <p>Se o GitHub Pages mostrar versão antiga, use este botão para atualizar sem perder seus lançamentos.</p>
         <button id="refresh-app" type="button">Atualizar aplicativo (limpar cache)</button>
