@@ -874,15 +874,6 @@ function renderDashboardInsights(items, month) {
     }
   }
 
-  // Ritmo de gasto
-  const daysTotal = getDaysInMonth(month);
-  const daysUsed = getDaysElapsed(month);
-  const dailyRate = daysUsed > 0 ? total / daysUsed : 0;
-  const projected = dailyRate * daysTotal;
-  const summary = computeSummary(filterByMonth(items, month));
-  const projectedSustainable = summary.income > 0 && projected <= summary.income;
-  const ritmoStatus = projectedSustainable ? { label: 'Sustent\u00e1vel', className: 'badge-status--normal' } : { label: 'Acima da renda', className: 'badge-status--high' };
-
   dashboardInsightsEl.innerHTML = `
     <div class="dashboard-insight-item">
       <div>
@@ -904,13 +895,6 @@ function renderDashboardInsights(items, month) {
         <strong>${formatPercent(recurringPct)}% recorrentes</strong>
       </div>
       <span class="badge-status badge-status--normal">${recurringPct > 70 ? 'Pouca flexibilidade' : 'Flex\u00edvel'}</span>
-    </div>
-    <div class="dashboard-insight-item">
-      <div>
-        <small>Ritmo de gasto (${daysUsed}/${daysTotal} dias)</small>
-        <strong>Projetado: ${formatMoney(projected)}</strong>
-      </div>
-      <span class="badge-status ${ritmoStatus.className}">${ritmoStatus.label}</span>
     </div>
   `;
 }
