@@ -37,6 +37,7 @@ const importDataButton = document.getElementById('import-data');
 const quickEntryTypeButtons = document.querySelectorAll('.quick-type-btn');
 const quickCategoryGrid = document.getElementById('quick-category-grid');
 const quickSubcategoryGrid = document.getElementById('quick-subcategory-grid');
+const quickSubcategoryTitle = document.getElementById('quick-subcategory-title');
 const quickAmountInput = document.getElementById('quick-amount');
 const quickDateInput = document.getElementById('quick-date');
 const quickSaveButton = document.getElementById('quick-save');
@@ -1114,10 +1115,17 @@ function renderQuickTypeButtons() {
 function renderQuickSubcategoryGrid() {
   if (!quickSubcategoryGrid) return;
   const categories = loadCategories();
-  const selectedSubs = categories[quickEntryState.category] || [];
+  const selectedCategory = quickEntryState.category;
+  const selectedSubs = categories[selectedCategory] || [];
+
+  if (quickSubcategoryTitle) {
+    quickSubcategoryTitle.textContent = selectedCategory
+      ? `2. Subcategoria de ${selectedCategory}`
+      : '2. Subcategoria';
+  }
 
   if (!selectedSubs.length) {
-    quickSubcategoryGrid.innerHTML = '<p class="quick-entry-empty">Selecione uma categoria.</p>';
+    quickSubcategoryGrid.innerHTML = '<p class="quick-entry-empty">Selecione uma categoria para ver as subcategorias.</p>';
     return;
   }
 
