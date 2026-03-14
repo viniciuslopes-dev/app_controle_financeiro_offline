@@ -244,6 +244,105 @@ button {
   background: color-mix(in srgb, var(--card) 70%, var(--bg));
 }
 
+
+.quick-entry {
+  display: grid;
+  gap: .75rem;
+  margin-bottom: 1rem;
+  padding: .85rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--card) 82%, var(--bg));
+}
+
+.quick-entry h3 {
+  margin: 0;
+}
+
+.quick-type-buttons {
+  display: grid;
+  gap: .45rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.quick-type-btn,
+.quick-chip {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.quick-type-btn.selected,
+.quick-chip.selected {
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  border-color: var(--primary);
+  color: color-mix(in srgb, var(--primary) 85%, var(--text));
+  font-weight: 600;
+}
+
+.quick-category-grid,
+.quick-subcategory-grid {
+  display: grid;
+  gap: .45rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.quick-chip {
+  text-align: left;
+  padding: .55rem .65rem;
+}
+
+.quick-entry-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: .9rem;
+}
+
+.quick-inputs {
+  display: grid;
+  gap: .65rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.quick-inputs > label {
+  min-width: 0;
+}
+
+#quick-amount {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.quick-save-btn {
+  width: 100%;
+  font-weight: 700;
+}
+
+
+@media (min-width: 420px) {
+  .quick-inputs {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 560px) {
+  .quick-type-buttons {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .quick-category-grid,
+  .quick-subcategory-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 860px) {
+  .quick-category-grid,
+  .quick-subcategory-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
 .modal {
   position: fixed;
   inset: 0;

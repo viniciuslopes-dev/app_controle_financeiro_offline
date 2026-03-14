@@ -34,6 +34,21 @@ const exportDataButton = document.getElementById('export-data');
 const importDataInput = document.getElementById('import-data-file');
 const importDataButton = document.getElementById('import-data');
 
+const quickEntryTypeButtons = document.querySelectorAll('.quick-type-btn');
+const quickCategoryGrid = document.getElementById('quick-category-grid');
+const quickSubcategoryGrid = document.getElementById('quick-subcategory-grid');
+const quickAmountInput = document.getElementById('quick-amount');
+const quickDateInput = document.getElementById('quick-date');
+const quickSaveButton = document.getElementById('quick-save');
+
+const quickEntryState = {
+  type: 'expense',
+  category: '',
+  subcategory: '',
+  amount: '',
+  date: '',
+};
+
 const editModal = document.getElementById('edit-modal');
 const editForm = document.getElementById('edit-form');
 const editTxIdInput = document.getElementById('edit-tx-id');
@@ -51,6 +66,8 @@ const cancelEditButton = document.getElementById('edit-cancel');
 
 dateInput.value = new Date().toISOString().slice(0, 10);
 monthFilterInput.value = new Date().toISOString().slice(0, 7);
+if (quickDateInput) quickDateInput.value = dateInput.value;
+quickEntryState.date = dateInput.value;
 
 function loadCategories() {
   try {
@@ -112,6 +129,7 @@ function syncCategoryOptions() {
   }
 
   syncSubcategoryOptions();
+  syncQuickEntryOptions();
   renderCategoryList();
 }
 
@@ -1045,6 +1063,123 @@ function render() {
   renderList(txs, selectedMonth);
 }
 
+
+function buildBaseTransaction(input) {
+  return {
+    type: input.type,
+    category: normalizeText(input.category || ''),
+    subcategory: normalizeText(input.subcategory || ''),
+    description: normalizeText(input.description || ''),
+    amount: sanitizeAmount(input.amount),
+    date: input.date,
+    recurrence: null,
+  };
+}
+
+function saveTransactionWithValidation(baseTx, recurrenceConfig = null) {
+  if (!baseTx.description || !baseTx.amount || !isValidDateString(baseTx.date) || !baseTx.category || !baseTx.subcategory) {
+    return false;
+  }
+
+  const all = loadTransactions();
+  if (recurrenceConfig && recurrenceConfig.enabled) {
+    const recurringTxs = createRecurringTransactions(baseTx, recurrenceConfig.frequency, recurrenceConfig.count);
+    all.push(...recurringTxs);
+  } else {
+    all.push({ ...baseTx, id: crypto.randomUUID() });
+  }
+
+  saveTransactions(all);
+  return true;
+}
+
+function syncQuickEntryFromForm() {
+  if (!quickEntryTypeButtons.length) return;
+  quickEntryState.type = document.getElementById('type').value || quickEntryState.type;
+  quickEntryState.category = normalizeText(categoryInput.value || '');
+  quickEntryState.subcategory = normalizeText(subcategoryInput.value || '');
+  quickEntryState.amount = '';
+  quickEntryState.date = dateInput.value;
+}
+
+function renderQuickTypeButtons() {
+  if (!quickEntryTypeButtons.length) return;
+  quickEntryTypeButtons.forEach((button) => {
+    const isActive = button.dataset.type === quickEntryState.type;
+    button.classList.toggle('selected', isActive);
+    button.setAttribute('aria-pressed', String(isActive));
+  });
+}
+
+function renderQuickSubcategoryGrid() {
+  if (!quickSubcategoryGrid) return;
+  const categories = loadCategories();
+  const selectedSubs = categories[quickEntryState.category] || [];
+
+  if (!selectedSubs.length) {
+    quickSubcategoryGrid.innerHTML = '<p class="quick-entry-empty">Selecione uma categoria.</p>';
+    return;
+  }
+
+  quickSubcategoryGrid.innerHTML = selectedSubs
+    .map((name) => `<button type="button" class="quick-chip ${name === quickEntryState.subcategory ? 'selected' : ''}" data-subcategory="${name}">${name}</button>`)
+    .join('');
+
+  quickSubcategoryGrid.querySelectorAll('[data-subcategory]').forEach((button) => {
+    button.addEventListener('click', () => {
+      quickEntryState.subcategory = button.dataset.subcategory || '';
+      renderQuickSubcategoryGrid();
+    });
+  });
+}
+
+function renderQuickCategoryGrid() {
+  if (!quickCategoryGrid) return;
+  const categories = loadCategories();
+  const categoryNames = Object.keys(categories).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+  quickCategoryGrid.innerHTML = categoryNames
+    .map((name) => `<button type="button" class="quick-chip ${name === quickEntryState.category ? 'selected' : ''}" data-category="${name}">${name}</button>`)
+    .join('');
+
+  quickCategoryGrid.querySelectorAll('[data-category]').forEach((button) => {
+    button.addEventListener('click', () => {
+      quickEntryState.category = button.dataset.category || '';
+      const subs = categories[quickEntryState.category] || [];
+      quickEntryState.subcategory = subs[0] || '';
+      renderQuickCategoryGrid();
+      renderQuickSubcategoryGrid();
+    });
+  });
+
+  renderQuickSubcategoryGrid();
+}
+
+function syncQuickEntryOptions() {
+  if (!quickEntryTypeButtons.length) return;
+  const categories = loadCategories();
+  const categoryNames = Object.keys(categories).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+  if (!categoryNames.includes(quickEntryState.category)) {
+    quickEntryState.category = categoryNames[0] || '';
+  }
+
+  const subcategories = categories[quickEntryState.category] || [];
+  if (!subcategories.includes(quickEntryState.subcategory)) {
+    quickEntryState.subcategory = subcategories[0] || '';
+  }
+
+  renderQuickTypeButtons();
+  renderQuickCategoryGrid();
+}
+
+function resetQuickEntry() {
+  quickEntryState.amount = '';
+  quickEntryState.date = new Date().toISOString().slice(0, 10);
+  if (quickAmountInput) quickAmountInput.value = '';
+  if (quickDateInput) quickDateInput.value = quickEntryState.date;
+}
+
 async function refreshAppWithoutLosingData() {
   if ('serviceWorker' in navigator) {
     const registrations = await navigator.serviceWorker.getRegistrations();
@@ -1115,36 +1250,77 @@ editForm.addEventListener('submit', (ev) => {
 
 form.addEventListener('submit', (ev) => {
   ev.preventDefault();
-  const baseTx = {
+  const baseTx = buildBaseTransaction({
     type: document.getElementById('type').value,
-    category: normalizeText(categoryInput.value),
-    subcategory: normalizeText(subcategoryInput.value),
-    description: normalizeText(document.getElementById('description').value),
-    amount: sanitizeAmount(document.getElementById('amount').value),
+    category: categoryInput.value,
+    subcategory: subcategoryInput.value,
+    description: document.getElementById('description').value,
+    amount: document.getElementById('amount').value,
     date: document.getElementById('date').value,
-    recurrence: null,
-  };
+  });
 
-  if (!baseTx.description || !baseTx.amount || !isValidDateString(baseTx.date) || !baseTx.category || !baseTx.subcategory) return;
+  const recurrenceConfig = recurringCheckbox.checked
+    ? {
+      enabled: true,
+      frequency: document.getElementById('recurrence-frequency').value,
+      count: Number(document.getElementById('recurrence-count').value || 12),
+    }
+    : null;
 
-  const all = loadTransactions();
-  if (recurringCheckbox.checked) {
-    const frequency = document.getElementById('recurrence-frequency').value;
-    const count = Number(document.getElementById('recurrence-count').value || 12);
-    const recurringTxs = createRecurringTransactions(baseTx, frequency, count);
-    all.push(...recurringTxs);
-  } else {
-    all.push({ ...baseTx, id: crypto.randomUUID() });
-  }
-
-  saveTransactions(all);
+  if (!saveTransactionWithValidation(baseTx, recurrenceConfig)) return;
 
   form.reset();
   recurrenceFields.classList.add('hidden');
   dateInput.value = new Date().toISOString().slice(0, 10);
   syncCategoryOptions();
+  syncQuickEntryFromForm();
+  resetQuickEntry();
   render();
 });
+
+
+quickEntryTypeButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    quickEntryState.type = button.dataset.type || 'expense';
+    renderQuickTypeButtons();
+  });
+});
+
+if (quickAmountInput) {
+  quickAmountInput.addEventListener('input', () => {
+    quickEntryState.amount = quickAmountInput.value;
+  });
+}
+
+if (quickDateInput) {
+  quickDateInput.addEventListener('input', () => {
+    quickEntryState.date = quickDateInput.value;
+  });
+}
+
+if (quickSaveButton) {
+  quickSaveButton.addEventListener('click', () => {
+    const baseTx = buildBaseTransaction({
+      type: quickEntryState.type,
+      category: quickEntryState.category,
+      subcategory: quickEntryState.subcategory,
+      description: `Lançamento rápido • ${quickEntryState.subcategory || quickEntryState.category || 'Sem categoria'}`,
+      amount: quickAmountInput?.value || quickEntryState.amount,
+      date: quickDateInput?.value || quickEntryState.date,
+    });
+
+    addCategoryAndSubcategory(baseTx.category, baseTx.subcategory);
+
+    if (!saveTransactionWithValidation(baseTx, null)) {
+      window.alert('Preencha valor, data e selecione categoria/subcategoria para salvar rapidamente.');
+      return;
+    }
+
+    syncCategoryOptions();
+    resetQuickEntry();
+    render();
+  });
+}
 
 if (refreshAppButton) {
   refreshAppButton.addEventListener('click', () => {
@@ -1200,5 +1376,7 @@ const txs = loadTransactions();
 if (migrateRecurringSeriesData(txs)) {
   saveTransactions(txs);
 }
+syncQuickEntryFromForm();
 syncCategoryOptions();
+resetQuickEntry();
 render();
