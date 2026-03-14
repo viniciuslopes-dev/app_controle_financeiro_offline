@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --bg: #f8fafc;
   --card: #ffffff;
   --text: #0f172a;
@@ -31,7 +31,9 @@ header h1 { margin: 0; font-size: 1.2rem; }
 header p { margin: .25rem 0 0; opacity: .85; }
 
 .main-nav {
+  background: #0f172a;
   background: color-mix(in srgb, #0f172a 92%, #ffffff);
+  border-bottom: 1px solid #1e293b;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, #0f172a);
 }
 
@@ -48,7 +50,9 @@ header p { margin: .25rem 0 0; opacity: .85; }
 
 .main-nav__tab {
   flex: 0 0 auto;
+  border: 1px solid #334155;
   border: 1px solid color-mix(in srgb, #ffffff 35%, #0f172a);
+  background: #1e293b;
   background: color-mix(in srgb, #0f172a 70%, #1e293b);
   color: #e2e8f0;
   padding: .55rem .8rem;
@@ -57,6 +61,7 @@ header p { margin: .25rem 0 0; opacity: .85; }
 }
 
 .main-nav__tab:hover {
+  background: #1d4ed8;
   background: color-mix(in srgb, #1d4ed8 32%, #0f172a);
 }
 

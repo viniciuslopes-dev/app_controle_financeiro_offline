@@ -512,7 +512,7 @@ function renderBars(
   }
 
   const total = rows.reduce((acc, row) => acc + row.value, 0);
-  const headerValue = summaryValue ?? total;
+  const headerValue = summaryValue === undefined || summaryValue === null ? total : summaryValue;
   const maxValue = Math.max(...rows.map((r) => r.value), 1);
   container.innerHTML = `<p class="chart-total">${summaryLabel}: <strong>${formatMoney(headerValue)}</strong></p>` + rows
     .map((row) => {
@@ -684,8 +684,12 @@ function resolveRecurringSeries(items, targetTx) {
     return true;
   });
 
+  const firstSeriesItem = unique[0];
+  const fallbackSeriesId =
+    firstSeriesItem && firstSeriesItem.recurrence ? firstSeriesItem.recurrence.seriesId : null;
+
   return {
-    seriesId: targetTx.recurrence.seriesId || unique[0]?.recurrence?.seriesId || createSeriesId(),
+    seriesId: targetTx.recurrence.seriesId || fallbackSeriesId || createSeriesId(),
     items: unique,
   };
 }
@@ -697,7 +701,9 @@ function recalcSeriesMetadata(items, seriesId) {
   const total = seriesItems.length;
   const startDate = seriesItems[0].date;
   const baseAmount = seriesItems[0].amount;
-  const frequency = seriesItems[0].recurrence?.frequency || 'monthly';
+  const frequency = seriesItems[0].recurrence && seriesItems[0].recurrence.frequency
+    ? seriesItems[0].recurrence.frequency
+    : 'monthly';
 
   seriesItems.forEach((tx, index) => {
     tx.recurrence = {
@@ -862,7 +868,7 @@ function adjustSeriesLength(items, seriesId, desiredTotal, cutoffDate = null) {
 
   if (targetTotal > existingTotal) {
     let last = seriesItems[seriesItems.length - 1];
-    const frequency = last.recurrence?.frequency || 'monthly';
+    const frequency = last.recurrence && last.recurrence.frequency ? last.recurrence.frequency : 'monthly';
     while (findSeriesItems(items, seriesId).length < targetTotal) {
       const nextTx = {
         ...last,
@@ -901,7 +907,7 @@ function applyRecurringEdit({ txId, scope, patch, recurrenceCount }) {
   const cutoffDate = target.date;
 
   if (normalizedScope === 'future') {
-    const frequency = target.recurrence?.frequency === 'yearly' ? 'yearly' : 'monthly';
+    const frequency = target.recurrence && target.recurrence.frequency === 'yearly' ? 'yearly' : 'monthly';
     const shouldShiftDates = typeof patch.date === 'string' && isValidDateString(patch.date);
     const anchorDate = shouldShiftDates ? patch.date : cutoffDate;
 
@@ -970,7 +976,9 @@ function applyRecurringEdit({ txId, scope, patch, recurrenceCount }) {
   const shouldShiftDates = typeof patch.date === 'string' && isValidDateString(patch.date);
   const sequenceDatesById = new Map();
   if (shouldShiftDates && affectedItems.length) {
-    const frequency = affectedItems[0].recurrence?.frequency || 'monthly';
+    const frequency = affectedItems[0].recurrence && affectedItems[0].recurrence.frequency
+      ? affectedItems[0].recurrence.frequency
+      : 'monthly';
     affectedItems.forEach((tx, index) => {
       const date = frequency === 'yearly' ? addYears(patch.date, index) : addMonths(patch.date, index);
       sequenceDatesById.set(tx.id, date);
@@ -1386,8 +1394,8 @@ if (quickSaveButton) {
       category: quickEntryState.category || fallbackCategory,
       subcategory: quickEntryState.subcategory || fallbackSubcategory,
       description: `Lançamento rápido • ${quickEntryState.subcategory || quickEntryState.category || 'Sem categoria'}`,
-      amount: quickAmountInput?.value || quickEntryState.amount,
-      date: quickDateInput?.value || quickEntryState.date,
+      amount: (quickAmountInput && quickAmountInput.value) || quickEntryState.amount,
+      date: (quickDateInput && quickDateInput.value) || quickEntryState.date,
     });
 
     addCategoryAndSubcategory(baseTx.category, baseTx.subcategory);
@@ -1417,7 +1425,7 @@ if (exportDataButton) {
 
 if (importDataButton) {
   importDataButton.addEventListener('click', () => {
-    const file = importDataInput?.files?.[0];
+    const file = importDataInput && importDataInput.files ? importDataInput.files[0] : null;
     if (!file) {
       window.alert('Selecione um arquivo .json para importar.');
       return;
