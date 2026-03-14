@@ -65,8 +65,18 @@ const editRecurrenceCountInput = document.getElementById('edit-recurrence-count'
 const editImpactEl = document.getElementById('edit-impact');
 const cancelEditButton = document.getElementById('edit-cancel');
 
-dateInput.value = new Date().toISOString().slice(0, 10);
-monthFilterInput.value = new Date().toISOString().slice(0, 7);
+function getLocalTodayISO() {
+  const now = new Date();
+  const timezoneOffsetMs = now.getTimezoneOffset() * 60 * 1000;
+  return new Date(now.getTime() - timezoneOffsetMs).toISOString().slice(0, 10);
+}
+
+function getLocalCurrentMonthISO() {
+  return getLocalTodayISO().slice(0, 7);
+}
+
+dateInput.value = getLocalTodayISO();
+monthFilterInput.value = getLocalCurrentMonthISO();
 if (quickDateInput) quickDateInput.value = dateInput.value;
 quickEntryState.date = dateInput.value;
 
@@ -1199,7 +1209,7 @@ function syncQuickEntryOptions() {
 
 function resetQuickEntry() {
   quickEntryState.amount = '';
-  quickEntryState.date = new Date().toISOString().slice(0, 10);
+  quickEntryState.date = getLocalTodayISO();
   if (quickAmountInput) quickAmountInput.value = '';
   if (quickDateInput) quickDateInput.value = quickEntryState.date;
 }
@@ -1299,7 +1309,7 @@ form.addEventListener('submit', (ev) => {
 
   form.reset();
   recurrenceFields.classList.add('hidden');
-  dateInput.value = new Date().toISOString().slice(0, 10);
+  dateInput.value = getLocalTodayISO();
   syncCategoryOptions();
   syncQuickEntryFromForm();
   resetQuickEntry();
