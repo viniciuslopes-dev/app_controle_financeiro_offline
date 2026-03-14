@@ -171,11 +171,108 @@ button {
 .summary-item {
   padding: .75rem;
   border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
   border-radius: 10px;
 }
+.summary-item--income { border-left-color: var(--income); }
+.summary-item--expense { border-left-color: var(--outflow); }
+.summary-item--investment { border-left-color: #2563eb; }
+.summary-item--goal { border-left-color: #7c3aed; }
+.summary-item--discounted { border-left-color: #64748b; }
+.summary-item--balance-positive { border-left-color: var(--income); }
+.summary-item--balance-negative { border-left-color: var(--outflow); }
 .summary-item small {
   display: block;
   color: var(--muted);
+}
+.summary-delta {
+  display: block;
+  font-size: .78rem;
+  font-weight: 600;
+  margin-top: .2rem;
+}
+.summary-delta--up { color: var(--income); }
+.summary-delta--down { color: var(--outflow); }
+.summary-delta--neutral { color: var(--muted); }
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: .5rem;
+  margin-top: .6rem;
+}
+.kpi-item {
+  padding: .65rem .75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+}
+.kpi-item small {
+  display: block;
+  color: var(--muted);
+  font-size: .82rem;
+}
+.kpi-item strong {
+  display: block;
+  font-size: 1.05rem;
+}
+
+.ytd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: .5rem;
+  margin-top: .6rem;
+}
+.ytd-item {
+  padding: .65rem .75rem;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: 10px;
+}
+.ytd-item small {
+  display: block;
+  color: var(--muted);
+  font-size: .82rem;
+}
+.ytd-item strong {
+  display: block;
+}
+.ytd-item .ytd-avg {
+  display: block;
+  font-size: .8rem;
+  color: var(--muted);
+  margin-top: .15rem;
+}
+
+.insight-alert {
+  color: var(--outflow);
+  font-weight: 600;
+  font-size: .88rem;
+  margin: .3rem 0 0;
+}
+.insight-positive {
+  color: var(--income);
+  font-weight: 600;
+  font-size: .88rem;
+  margin: .3rem 0 0;
+}
+
+.bar-row--above-avg .bar > span { background: var(--outflow); }
+.bar-row--above-avg .bar { background: #fee2e2; }
+.bar-row--below-avg .bar > span { background: var(--income); }
+.bar-row--below-avg .bar { background: #dcfce7; }
+.bar-row--income-above .bar > span { background: var(--income); }
+.bar-row--income-above .bar { background: #dcfce7; }
+.bar-row--income-below .bar > span { background: var(--outflow); }
+.bar-row--income-below .bar { background: #fee2e2; }
+
+.chart-minmax {
+  font-size: .82rem;
+  color: var(--muted);
+  margin: .15rem 0 .4rem;
 }
 .bar-chart {
   display: grid;
