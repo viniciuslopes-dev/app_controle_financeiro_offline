@@ -372,6 +372,17 @@ button {
   margin-left: .45rem;
 }
 
+.chart-delta-breakdown {
+  margin: 0 0 .2rem;
+  color: var(--muted);
+  font-size: .85rem;
+}
+
+.chart-delta-breakdown small {
+  color: var(--muted);
+  font-weight: 600;
+}
+
 .chart-delta--positive {
   color: var(--income);
 }

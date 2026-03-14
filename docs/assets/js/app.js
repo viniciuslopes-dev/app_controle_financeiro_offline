@@ -606,6 +606,7 @@ function renderBars(
     scaleMode = 'max',
     insightText = '',
     delta,
+    secondaryDeltas = [],
   } = options;
 
   if (!rows.length) {
@@ -631,8 +632,21 @@ function renderBars(
   const deltaText = !delta
     ? ''
     : ` <span class="chart-delta ${deltaClass}">(${delta.absoluteLabel} | ${delta.percentLabel})</span>`;
+  const secondaryDeltaHtml = secondaryDeltas
+    .map((item) => {
+      const directionValue = typeof item.directionValue === 'number' ? item.directionValue : item.percent;
+      const itemClass = item.percent === null
+        ? 'chart-delta--neutral'
+        : directionValue > 0
+          ? 'chart-delta--positive'
+          : directionValue < 0
+            ? 'chart-delta--negative'
+            : 'chart-delta--neutral';
+      return `<p class="chart-delta-breakdown"><small>${item.label}:</small> <span class="chart-delta ${itemClass}">(${item.absoluteLabel} | ${item.percentLabel})</span></p>`;
+    })
+    .join('');
 
-  container.innerHTML = `<p class="chart-total">${summaryLabel}: <strong>${formatMoney(headerValue)}</strong>${deltaText}</p>${insightText ? `<p class="chart-insight">${insightText}</p>` : ''}` + rows
+  container.innerHTML = `<p class="chart-total">${summaryLabel}: <strong>${formatMoney(headerValue)}</strong>${deltaText}</p>${secondaryDeltaHtml}${insightText ? `<p class="chart-insight">${insightText}</p>` : ''}` + rows
     .map((row) => {
       const widthBase = scaleMode === 'total' ? total : maxValue;
       const rawWidth = widthBase > 0 ? (row.value / widthBase) * 100 : 0;
@@ -662,13 +676,86 @@ function getMonthOverMonthDelta(items, selectedMonth, type) {
   const previousTotal = filterByMonthAndType(items, previousMonth, type).reduce((acc, tx) => acc + tx.amount, 0);
   const absolute = currentTotal - previousTotal;
   const percent = previousTotal > 0 ? (absolute / previousTotal) * 100 : null;
+  const isExpenseType = type === 'expense';
+  const isMixedOutflowType = type === 'outflow';
+  const directionValue = isExpenseType ? -absolute : isMixedOutflowType ? 0 : absolute;
+
+  const absoluteLabel = isExpenseType
+    ? absolute < 0
+      ? `${formatMoney(Math.abs(absolute))} a menos`
+      : absolute > 0
+        ? `${formatMoney(absolute)} a mais`
+        : formatMoney(0)
+    : `${absolute >= 0 ? '+' : '-'}${formatMoney(Math.abs(absolute))}`;
+
+  const percentLabel = percent === null
+    ? 'sem base no mês anterior'
+    : isExpenseType
+      ? percent < 0
+        ? `${formatPercent(Math.abs(percent))}% a menos`
+        : percent > 0
+          ? `${formatPercent(percent)}% a mais`
+          : `${formatPercent(0)}%`
+      : `${percent >= 0 ? '+' : ''}${formatPercent(percent)}%`;
 
   return {
     absolute,
     percent,
-    absoluteLabel: `${absolute >= 0 ? '+' : '-'}${formatMoney(Math.abs(absolute))}`,
-    percentLabel: percent === null ? 'sem base no mês anterior' : `${percent >= 0 ? '+' : ''}${formatPercent(percent)}%`,
+    directionValue,
+    absoluteLabel,
+    percentLabel,
   };
+}
+
+function getOutflowBreakdownDeltas(items, selectedMonth) {
+  if (!selectedMonth) return [];
+
+  const previousMonth = getPreviousMonth(selectedMonth);
+  if (!previousMonth) return [];
+
+  const currentItems = filterByMonth(items, selectedMonth);
+  const previousItems = filterByMonth(items, previousMonth);
+
+  const sumTypes = (list, types) => list
+    .filter((tx) => types.includes(tx.type))
+    .reduce((acc, tx) => acc + tx.amount, 0);
+
+  const expenseCurrent = sumTypes(currentItems, ['expense']);
+  const expensePrevious = sumTypes(previousItems, ['expense']);
+  const expenseAbsolute = expenseCurrent - expensePrevious;
+  const expensePercent = expensePrevious > 0 ? (expenseAbsolute / expensePrevious) * 100 : null;
+
+  const futureCurrent = sumTypes(currentItems, ['investment', 'goal']);
+  const futurePrevious = sumTypes(previousItems, ['investment', 'goal']);
+  const futureAbsolute = futureCurrent - futurePrevious;
+  const futurePercent = futurePrevious > 0 ? (futureAbsolute / futurePrevious) * 100 : null;
+
+  return [
+    {
+      label: 'Despesas',
+      absoluteLabel: expenseAbsolute < 0
+        ? `${formatMoney(Math.abs(expenseAbsolute))} a menos`
+        : expenseAbsolute > 0
+          ? `${formatMoney(expenseAbsolute)} a mais`
+          : formatMoney(0),
+      percentLabel: expensePercent === null
+        ? 'sem base no mês anterior'
+        : expensePercent < 0
+          ? `${formatPercent(Math.abs(expensePercent))}% a menos`
+          : expensePercent > 0
+            ? `${formatPercent(expensePercent)}% a mais`
+            : `${formatPercent(0)}%`,
+      directionValue: -expenseAbsolute,
+      percent: expensePercent,
+    },
+    {
+      label: 'Investimentos + metas',
+      absoluteLabel: `${futureAbsolute >= 0 ? '+' : '-'}${formatMoney(Math.abs(futureAbsolute))}`,
+      percentLabel: futurePercent === null ? 'sem base no mês anterior' : `${futurePercent >= 0 ? '+' : ''}${formatPercent(futurePercent)}%`,
+      directionValue: futureAbsolute,
+      percent: futurePercent,
+    },
+  ];
 }
 
 function getNetFlowMonthOverMonthDelta(items, selectedMonth) {
@@ -768,11 +855,12 @@ function renderCategoryChart(items, month) {
 
   const tone = selectedType === 'income' ? 'income' : selectedType === 'all' ? 'default' : 'outflow';
   const delta = getMonthOverMonthDelta(items, month, selectedType);
+  const secondaryDeltas = selectedType === 'outflow' ? getOutflowBreakdownDeltas(items, month) : [];
   renderBars(
     categoryChartEl,
     rows,
     `Sem lançamentos de ${getTypeLabel(selectedType).toLowerCase()} para este filtro.`,
-    { tone, scaleMode: 'total', delta },
+    { tone, scaleMode: 'total', delta, secondaryDeltas },
   );
 }
 
