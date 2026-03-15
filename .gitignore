@@ -1,0 +1,107 @@
+# =========================
+# Sistema operacional
+# =========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.Trashes/
+._*
+
+# =========================
+# Dependências
+# =========================
+node_modules/
+
+# =========================
+# Logs e diagnósticos
+# =========================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.pid
+*.seed
+*.pid.lock
+
+# =========================
+# Cobertura e artefatos de build
+# =========================
+coverage/
+.nyc_output/
+dist/
+build/
+tmp/
+temp/
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.svelte-kit/
+out/
+
+# =========================
+# Variáveis de ambiente / segredos
+# =========================
+.env
+.env.*
+!.env.example
+!.env.template
+*.env
+*.env.*
+
+# Arquivos de segredos e chaves
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.jks
+*.keystore
+secrets/
+
+# =========================
+# Banco de dados local
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# =========================
+# IDEs e editores
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*.orig
+
+# =========================
+# Android / Gradle
+# =========================
+.gradle/
+local.properties
+**/build/
+**/.cxx/
+**/.externalNativeBuild/
+*.apk
+*.aab
+*.ap_
+
+# =========================
+# Ferramentas e cache
+# =========================
+.eslintcache
+.stylelintcache
+
+# =========================
+# Arquivos de runtime
+# =========================
+*.stackdump
