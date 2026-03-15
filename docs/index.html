@@ -11,7 +11,7 @@
   <body>
     <header>
       <h1>Controle Financeiro (Offline)</h1>
-      <p>Login com sessão JWT • dados locais • instalável</p>
+      <p>Dois modos: offline local no aparelho ou conta sincronizada na nuvem • instalável</p>
     </header>
 
     <nav class="main-nav" aria-label="Navegação principal">
@@ -26,6 +26,10 @@
     <main>
       <section class="card" data-view="more">
         <h2>Sessão e sincronização</h2>
+        <p>
+          <strong>Modo offline local:</strong> use sem conta e mantenha seus dados apenas neste aparelho.
+          <strong>Modo conta sincronizada:</strong> entre com sua conta para sincronizar com a nuvem entre dispositivos.
+        </p>
         <form id="session-form" class="nested-grid">
           <label>
             Email ou identificador
@@ -38,8 +42,18 @@
           <button id="sign-in-button" type="submit">Entrar</button>
           <button id="sign-out-button" type="button" class="secondary-btn">Sair</button>
         </form>
-        <p id="session-status" aria-live="polite">Sessão: não autenticado.</p>
+        <p id="session-status" aria-live="polite">Sessão: não autenticado (modo offline local).</p>
         <p id="sync-status" aria-live="polite">Sincronização: verificando conectividade...</p>
+        <p id="data-origin-status" aria-live="polite">Origem dos dados: local pendente.</p>
+      </section>
+
+      <section class="card" data-view="more">
+        <h2>Como funciona (onboarding rápido)</h2>
+        <ul>
+          <li><strong>Sem conta:</strong> todos os dados ficam salvos só no aparelho atual (não sincroniza automaticamente).</li>
+          <li><strong>Com conta:</strong> o app mantém sincronização incremental com a nuvem quando houver internet.</li>
+          <li><strong>Backup manual:</strong> exporte/importe arquivo .json sempre que quiser uma cópia extra dos seus dados.</li>
+        </ul>
       </section>
 
       <section class="card" data-view="more">
