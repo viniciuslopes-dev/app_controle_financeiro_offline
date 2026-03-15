@@ -48,6 +48,7 @@ const authSecretInput = document.getElementById('auth-secret');
 const signOutButton = document.getElementById('sign-out-button');
 const sessionStatusEl = document.getElementById('session-status');
 const syncStatusEl = document.getElementById('sync-status');
+const dataOriginStatusEl = document.getElementById('data-origin-status');
 
 
 const navTabs = document.querySelectorAll('.main-nav__tab');
@@ -102,6 +103,77 @@ let currentUser = null;
 let isApplyingRemoteChanges = false;
 let syncRetryTimer = null;
 let syncRetryAttempt = 0;
+
+let lastSyncAt = null;
+let lastSyncError = null;
+let hasPendingConflict = false;
+
+function setLastSyncSuccess() {
+  lastSyncAt = nowIsoString();
+  lastSyncError = null;
+}
+
+function setLastSyncError(message) {
+  lastSyncError = normalizeText(String(message || 'Falha de sincronização.'));
+}
+
+function getSessionStatusText() {
+  const user = getCurrentUser();
+  if (!user) {
+    return 'Sessão: não autenticado (modo offline local).';
+  }
+
+  const expiryTimestamp = parseTimestamp(user.expiresAt);
+  if (expiryTimestamp !== null && expiryTimestamp <= Date.now()) {
+    return `Sessão: token expirado para ${user.identifier}. Entre novamente para continuar sincronizando.`;
+  }
+
+  const expiryText = user.expiresAt
+    ? ` Token expira em ${new Date(user.expiresAt).toLocaleString('pt-BR')}.`
+    : '';
+  return `Sessão: logado como ${user.identifier}.${expiryText}`;
+}
+
+function getSyncStatusText() {
+  const pendingChanges = loadSyncQueue().length;
+  const onlineText = navigator.onLine ? 'online' : 'offline';
+
+  if (!getCurrentUser()) {
+    return `Sincronização: modo offline local (${onlineText}). Pendências locais: ${pendingChanges} alteração(ões).`;
+  }
+
+  if (!navigator.onLine) {
+    const lastSyncText = lastSyncAt ? ` Última sincronização: ${new Date(lastSyncAt).toLocaleString('pt-BR')}.` : '';
+    return `Sincronização: sem internet. Fila local pendente: ${pendingChanges} alteração(ões).${lastSyncText}`;
+  }
+
+  if (lastSyncError) {
+    const lastSyncText = lastSyncAt ? ` Última sincronização com sucesso: ${new Date(lastSyncAt).toLocaleString('pt-BR')}.` : '';
+    return `Sincronização: erro de rede/servidor (${lastSyncError}). Pendências: ${pendingChanges} alteração(ões).${lastSyncText}`;
+  }
+
+  const lastSyncLabel = lastSyncAt
+    ? `Última sincronização: ${new Date(lastSyncAt).toLocaleString('pt-BR')}.`
+    : 'Última sincronização: ainda não realizada nesta sessão.';
+  return `Sincronização ativa. Fila offline pendente: ${pendingChanges} alteração(ões). ${lastSyncLabel}`;
+}
+
+function getDataOriginStatusText() {
+  const pendingChanges = loadSyncQueue().length;
+  if (hasPendingConflict) {
+    return 'Origem dos dados: conflito pendente de revisão (dados locais e nuvem divergentes).';
+  }
+
+  if (pendingChanges > 0) {
+    return `Origem dos dados: local pendente (${pendingChanges} alteração(ões) aguardando envio).`;
+  }
+
+  if (getCurrentUser() && navigator.onLine && !lastSyncError && lastSyncAt) {
+    return `Origem dos dados: sincronizado com nuvem (última sincronização em ${new Date(lastSyncAt).toLocaleString('pt-BR')}).`;
+  }
+
+  return 'Origem dos dados: local pendente.';
+}
 const AUTH_API_BASE_URL = normalizeText(String(window.AUTH_API_BASE_URL || '')).replace(/\/$/, '');
 
 function getAuthApiUrl(path) {
@@ -272,6 +344,8 @@ async function signOut() {
     window.clearTimeout(syncRetryTimer);
     syncRetryTimer = null;
   }
+  lastSyncError = null;
+  hasPendingConflict = false;
 
   try {
     await fetch(getAuthApiUrl('/auth/logout'), {
@@ -284,28 +358,22 @@ async function signOut() {
 }
 
 function updateSyncStatus() {
-  if (!syncStatusEl) return;
-
-  const pendingChanges = loadSyncQueue().length;
-
-  if (navigator.onLine) {
-    syncStatusEl.textContent = `Sincronização incremental ativa. Fila offline pendente: ${pendingChanges} alteração(ões).`;
-    return;
+  if (syncStatusEl) {
+    syncStatusEl.textContent = getSyncStatusText();
   }
 
-  syncStatusEl.textContent = `Sem internet (modo offline). Fila local pendente: ${pendingChanges} alteração(ões).`;
+  if (dataOriginStatusEl) {
+    dataOriginStatusEl.textContent = getDataOriginStatusText();
+  }
 }
 
 function renderSessionState() {
   if (sessionStatusEl) {
     const user = getCurrentUser();
     if (user) {
-      const expiryText = user.expiresAt
-        ? ` Expira em ${new Date(user.expiresAt).toLocaleString('pt-BR')}.`
-        : '';
-      sessionStatusEl.textContent = `Sessão: autenticado como ${user.identifier}.${expiryText}`;
+      sessionStatusEl.textContent = getSessionStatusText();
     } else {
-      sessionStatusEl.textContent = 'Sessão: não autenticado.';
+      sessionStatusEl.textContent = getSessionStatusText();
     }
   }
 
@@ -941,6 +1009,7 @@ async function pushPendingChanges() {
   }
 
   saveSyncQueue([]);
+  hasPendingConflict = Array.isArray(payload.conflicts) && payload.conflicts.length > 0;
   if (Array.isArray(payload.conflicts) && payload.conflicts.length) {
     applyRemoteChanges(payload.conflicts.map((item) => item.server).filter(Boolean));
   }
@@ -976,12 +1045,21 @@ async function runIncrementalSync() {
   if (!navigator.onLine || !currentUser) return { ok: false, skipped: true };
 
   const pushResult = await pushPendingChanges();
-  if (!pushResult.ok) return pushResult;
+  if (!pushResult.ok) {
+    setLastSyncError(pushResult.message || 'Falha ao enviar alterações.');
+    updateSyncStatus();
+    return pushResult;
+  }
 
   const pullResult = await pullRemoteChanges();
-  if (!pullResult.ok) return pullResult;
+  if (!pullResult.ok) {
+    setLastSyncError(pullResult.message || 'Falha ao baixar alterações.');
+    updateSyncStatus();
+    return pullResult;
+  }
 
   syncRetryAttempt = 0;
+  setLastSyncSuccess();
   updateSyncStatus();
   render();
   return {
@@ -1006,6 +1084,10 @@ function scheduleSyncRetry(delayMs = null) {
       return;
     }
 
+    if (!result.skipped) {
+      setLastSyncError(result.message || 'Falha temporária de rede.');
+      updateSyncStatus();
+    }
     syncRetryAttempt += 1;
     scheduleSyncRetry();
   }, Math.max(0, waitMs));
@@ -2860,6 +2942,8 @@ if (sessionForm) {
       return;
     }
 
+    lastSyncError = null;
+    hasPendingConflict = false;
     renderSessionState();
     await handleRemoteBackupOnSignIn();
   });
@@ -2889,6 +2973,7 @@ async function initializeApplication() {
   } else {
     currentUser = null;
     if (restoredSession && restoredSession.reason === 'session-expired') {
+      setLastSyncError('Sessão expirada');
       window.alert('Sua sessão expirou. Entre novamente para continuar sincronizando com sua conta.');
     }
   }
