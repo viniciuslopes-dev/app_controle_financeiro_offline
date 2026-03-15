@@ -46,10 +46,18 @@ const sessionForm = document.getElementById('session-form');
 const authIdentifierInput = document.getElementById('auth-identifier');
 const authSecretInput = document.getElementById('auth-secret');
 const createAccountButton = document.getElementById('create-account-button');
+const forgotPasswordToggleButton = document.getElementById('forgot-password-toggle');
 const signOutButton = document.getElementById('sign-out-button');
 const sessionStatusEl = document.getElementById('session-status');
 const syncStatusEl = document.getElementById('sync-status');
 const dataOriginStatusEl = document.getElementById('data-origin-status');
+const passwordRecoveryPanel = document.getElementById('password-recovery-panel');
+const passwordResetRequestForm = document.getElementById('password-reset-request-form');
+const passwordResetConfirmForm = document.getElementById('password-reset-confirm-form');
+const passwordResetIdentifierInput = document.getElementById('password-reset-identifier');
+const passwordResetTokenInput = document.getElementById('password-reset-token');
+const passwordResetSecretInput = document.getElementById('password-reset-secret');
+const passwordResetStatusEl = document.getElementById('password-reset-status');
 
 
 const navTabs = document.querySelectorAll('.main-nav__tab');
@@ -104,6 +112,7 @@ let currentUser = null;
 let isApplyingRemoteChanges = false;
 let syncRetryTimer = null;
 let syncRetryAttempt = 0;
+let isPasswordRecoveryVisible = false;
 
 let lastSyncAt = null;
 let lastSyncError = null;
@@ -314,6 +323,94 @@ function parseApiError(payload) {
     reason: String(payload.reason || '').trim(),
     message: String(payload.message || '').trim(),
   };
+}
+
+function setPasswordResetStatus(message) {
+  if (!passwordResetStatusEl) return;
+  passwordResetStatusEl.textContent = normalizeText(String(message || ''));
+}
+
+function renderPasswordRecoveryVisibility() {
+  if (!passwordRecoveryPanel) return;
+  passwordRecoveryPanel.classList.toggle('hidden', !isPasswordRecoveryVisible);
+  if (forgotPasswordToggleButton) {
+    forgotPasswordToggleButton.textContent = isPasswordRecoveryVisible ? 'Fechar recuperação' : 'Esqueci minha senha';
+  }
+}
+
+async function requestPasswordReset(identifier) {
+  const normalizedIdentifier = normalizeText(String(identifier || ''));
+  if (!normalizedIdentifier) {
+    return { ok: false, reason: 'invalid-input', message: 'Informe o identificador da conta.' };
+  }
+
+  try {
+    const response = await fetch(getAuthApiUrl('/auth/password-reset/request'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ identifier: normalizedIdentifier }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    const apiError = parseApiError(payload);
+    if (!response.ok) {
+      return { ok: false, reason: apiError.reason || 'password-reset-request-failed', message: apiError.message || 'Não foi possível solicitar o reset agora.' };
+    }
+
+    const data = payload && typeof payload.data === 'object' ? payload.data : {};
+    return {
+      ok: true,
+      message: String(payload.message || 'Solicitação recebida.'),
+      token: normalizeText(String(data.resetToken || '')),
+      expiresAt: String(data.expiresAt || ''),
+    };
+  } catch {
+    return { ok: false, reason: 'network-error', message: 'Falha de conexão ao solicitar reset de senha.' };
+  }
+}
+
+async function confirmPasswordReset(token, secret) {
+  const normalizedToken = normalizeText(String(token || ''));
+  const normalizedSecret = String(secret || '').trim();
+  if (!normalizedToken || !normalizedSecret) {
+    return { ok: false, reason: 'invalid-input', message: 'Informe token e nova senha.' };
+  }
+
+  try {
+    const response = await fetch(getAuthApiUrl('/auth/password-reset/confirm'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ token: normalizedToken, secret: normalizedSecret }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    const apiError = parseApiError(payload);
+    if (!response.ok) {
+      if (apiError.reason === 'reset-token-expired') {
+        return { ok: false, reason: 'reset-token-expired', message: 'Token expirado. Solicite um novo token.' };
+      }
+      if (apiError.reason === 'reset-token-invalid') {
+        return { ok: false, reason: 'reset-token-invalid', message: 'Token inválido. Revise e tente novamente.' };
+      }
+      if (apiError.reason === 'reset-token-used') {
+        return { ok: false, reason: 'reset-token-used', message: 'Token já utilizado. Solicite um novo token.' };
+      }
+      return { ok: false, reason: apiError.reason || 'password-reset-confirm-failed', message: apiError.message || 'Não foi possível redefinir a senha agora.' };
+    }
+
+    return {
+      ok: true,
+      message: String(payload.message || 'Senha redefinida com sucesso.'),
+    };
+  } catch {
+    return { ok: false, reason: 'network-error', message: 'Falha de conexão ao redefinir a senha.' };
+  }
 }
 
 async function signIn(identifier, secret) {
@@ -3036,6 +3133,57 @@ if (createAccountButton) {
   });
 }
 
+if (forgotPasswordToggleButton) {
+  forgotPasswordToggleButton.addEventListener('click', () => {
+    isPasswordRecoveryVisible = !isPasswordRecoveryVisible;
+    renderPasswordRecoveryVisibility();
+    if (isPasswordRecoveryVisible && passwordResetIdentifierInput && authIdentifierInput) {
+      passwordResetIdentifierInput.value = normalizeText(String(authIdentifierInput.value || ''));
+    }
+  });
+}
+
+if (passwordResetRequestForm) {
+  passwordResetRequestForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const result = await requestPasswordReset(passwordResetIdentifierInput ? passwordResetIdentifierInput.value : '');
+    if (!result.ok) {
+      setPasswordResetStatus(result.message || 'Falha ao solicitar reset de senha.');
+      return;
+    }
+
+    if (passwordResetTokenInput && result.token) {
+      passwordResetTokenInput.value = result.token;
+    }
+
+    if (result.token && result.expiresAt) {
+      const expires = new Date(result.expiresAt).toLocaleString('pt-BR');
+      setPasswordResetStatus(`Token emitido com sucesso. Expira em ${expires}.`);
+      return;
+    }
+
+    setPasswordResetStatus(result.message || 'Solicitação enviada com sucesso.');
+  });
+}
+
+if (passwordResetConfirmForm) {
+  passwordResetConfirmForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const result = await confirmPasswordReset(
+      passwordResetTokenInput ? passwordResetTokenInput.value : '',
+      passwordResetSecretInput ? passwordResetSecretInput.value : '',
+    );
+
+    if (!result.ok) {
+      setPasswordResetStatus(result.message || 'Falha ao redefinir senha.');
+      return;
+    }
+
+    if (passwordResetSecretInput) passwordResetSecretInput.value = '';
+    setPasswordResetStatus(result.message || 'Senha redefinida com sucesso.');
+  });
+}
+
 if (signOutButton) {
   signOutButton.addEventListener('click', async () => {
     await signOut();
@@ -3066,6 +3214,8 @@ async function initializeApplication() {
   }
 
   renderSessionState();
+  renderPasswordRecoveryVisibility();
+  setPasswordResetStatus('Solicite um token e em seguida informe token + nova senha para concluir.');
   if (currentUser) scheduleSyncRetry(300);
 
   migrateLegacyData();
