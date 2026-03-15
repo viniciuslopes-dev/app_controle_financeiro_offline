@@ -98,35 +98,99 @@ const editImpactEl = document.getElementById('edit-impact');
 const cancelEditButton = document.getElementById('edit-cancel');
 
 let currentUser = null;
+const AUTH_API_BASE_URL = normalizeText(String(window.AUTH_API_BASE_URL || '')).replace(/\/$/, '');
 
-function persistSession(user) {
-  if (!user) {
+function getAuthApiUrl(path) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${AUTH_API_BASE_URL}${normalizedPath}`;
+}
+
+function decodeJwtPayload(token) {
+  if (typeof token !== 'string' || !token.includes('.')) return null;
+  try {
+    const payloadChunk = token.split('.')[1];
+    const normalized = payloadChunk.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const decoded = atob(padded);
+    return JSON.parse(decoded);
+  } catch {
+    return null;
+  }
+}
+
+function isTokenExpired(token) {
+  const payload = decodeJwtPayload(token);
+  if (!payload || typeof payload.exp !== 'number') return true;
+  return (payload.exp * 1000) <= Date.now();
+}
+
+function persistSession(session) {
+  if (!session) {
     localStorage.removeItem(SESSION_STORAGE_KEY);
     return;
   }
 
-  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(user));
+  const safeSession = {
+    token: String(session.token || ''),
+    expiresAt: String(session.expiresAt || ''),
+    identifier: normalizeText(String(session.identifier || '')),
+    provider: 'backend-api',
+  };
+
+  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(safeSession));
 }
 
 function getCurrentUser() {
   return currentUser;
 }
 
-function loadSession() {
+async function loadSession() {
   try {
     const stored = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) || 'null');
     if (!stored || typeof stored !== 'object') return null;
 
+    const token = String(stored.token || '').trim();
     const identifier = normalizeText(String(stored.identifier || ''));
-    if (!identifier) return null;
 
-    return {
-      identifier,
+    if (!token || !identifier) {
+      persistSession(null);
+      return { ok: false, reason: 'invalid-session' };
+    }
+
+    if (isTokenExpired(token)) {
+      persistSession(null);
+      return { ok: false, reason: 'session-expired' };
+    }
+
+    const response = await fetch(getAuthApiUrl('/auth/session'), {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.status === 401) {
+      persistSession(null);
+      return { ok: false, reason: 'session-expired' };
+    }
+
+    if (!response.ok) {
+      return { ok: false, reason: 'session-validation-failed' };
+    }
+
+    const payload = await response.json();
+    const session = {
+      token,
+      expiresAt: payload.expiresAt,
+      identifier: normalizeText(String(payload.identifier || identifier)),
+      provider: 'backend-api',
       signedInAt: stored.signedInAt || new Date().toISOString(),
-      provider: stored.provider || 'local-offline',
     };
+
+    persistSession(session);
+    return { ok: true, user: session };
   } catch {
-    return null;
+    return { ok: false, reason: 'session-validation-failed' };
   }
 }
 
@@ -134,23 +198,67 @@ async function signIn(identifier, secret) {
   const normalizedIdentifier = normalizeText(String(identifier || ''));
   const normalizedSecret = String(secret || '').trim();
   if (!normalizedIdentifier || !normalizedSecret) {
-    return { ok: false, message: 'Informe identificador e senha/código.' };
+    return { ok: false, reason: 'invalid-input', message: 'Informe identificador e senha/código.' };
   }
 
-  const user = {
-    identifier: normalizedIdentifier,
-    signedInAt: new Date().toISOString(),
-    provider: 'local-offline',
-  };
+  try {
+    const response = await fetch(getAuthApiUrl('/auth/login'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ identifier: normalizedIdentifier, secret: normalizedSecret }),
+    });
 
-  currentUser = user;
-  persistSession(user);
-  return { ok: true, user };
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      if (payload.reason === 'account-not-found') {
+        return { ok: false, reason: 'account-not-found', message: 'Conta inexistente.' };
+      }
+      if (payload.reason === 'invalid-credentials') {
+        return { ok: false, reason: 'invalid-credentials', message: 'Credenciais inválidas.' };
+      }
+      return { ok: false, reason: 'auth-failed', message: payload.message || 'Não foi possível autenticar agora.' };
+    }
+
+    const user = {
+      identifier: normalizeText(String(payload.identifier || normalizedIdentifier)),
+      signedInAt: new Date().toISOString(),
+      provider: 'backend-api',
+      token: String(payload.token || '').trim(),
+      expiresAt: String(payload.expiresAt || ''),
+    };
+
+    if (!user.token) {
+      return { ok: false, reason: 'invalid-token', message: 'Resposta de autenticação inválida.' };
+    }
+
+    currentUser = user;
+    persistSession(user);
+    return { ok: true, user };
+  } catch {
+    return { ok: false, reason: 'network-error', message: 'Não foi possível conectar ao servidor de autenticação.' };
+  }
 }
 
-function signOut() {
+async function signOut() {
+  const token = currentUser ? currentUser.token : '';
   currentUser = null;
   persistSession(null);
+
+  if (!token) return;
+
+  try {
+    await fetch(getAuthApiUrl('/auth/logout'), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  } catch {
+    // Ignora falhas de logout remoto.
+  }
 }
 
 function updateSyncStatus() {
@@ -167,9 +275,14 @@ function updateSyncStatus() {
 function renderSessionState() {
   if (sessionStatusEl) {
     const user = getCurrentUser();
-    sessionStatusEl.textContent = user
-      ? `Sessão: autenticado como ${user.identifier}.`
-      : 'Sessão: não autenticado.';
+    if (user) {
+      const expiryText = user.expiresAt
+        ? ` Expira em ${new Date(user.expiresAt).toLocaleString('pt-BR')}.`
+        : '';
+      sessionStatusEl.textContent = `Sessão: autenticado como ${user.identifier}.${expiryText}`;
+    } else {
+      sessionStatusEl.textContent = 'Sessão: não autenticado.';
+    }
   }
 
   if (authIdentifierInput) {
@@ -2463,8 +2576,8 @@ if (sessionForm) {
 }
 
 if (signOutButton) {
-  signOutButton.addEventListener('click', () => {
-    signOut();
+  signOutButton.addEventListener('click', async () => {
+    await signOut();
     renderSessionState();
   });
 }
@@ -2476,15 +2589,31 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./service-worker.js').catch(console.error);
 }
 
-currentUser = loadSession();
-renderSessionState();
+async function initializeApplication() {
+  const restoredSession = await loadSession();
+  if (restoredSession && restoredSession.ok) {
+    currentUser = restoredSession.user;
+  } else {
+    currentUser = null;
+    if (restoredSession && restoredSession.reason === 'session-expired') {
+      window.alert('Sua sessão expirou. Entre novamente para continuar sincronizando com sua conta.');
+    }
+  }
 
-migrateLegacyData();
-const txs = loadTransactions();
-if (migrateRecurringSeriesData(txs)) {
-  saveTransactions(txs);
+  renderSessionState();
+
+  migrateLegacyData();
+  const txs = loadTransactions();
+  if (migrateRecurringSeriesData(txs)) {
+    saveTransactions(txs);
+  }
+  syncCategoryOptions();
+  resetQuickEntry();
+  setActiveView(activeView);
+  render();
 }
-syncCategoryOptions();
-resetQuickEntry();
-setActiveView(activeView);
-render();
+
+initializeApplication().catch((error) => {
+  console.error(error);
+  renderSessionState();
+});
