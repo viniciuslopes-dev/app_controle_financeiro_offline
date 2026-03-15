@@ -40,8 +40,10 @@
             <input id="auth-secret" type="password" autocomplete="current-password" placeholder="Digite sua senha/código" required />
           </label>
           <button id="sign-in-button" type="submit">Entrar</button>
+          <button id="create-account-button" type="button" class="secondary-btn">Criar conta</button>
           <button id="sign-out-button" type="button" class="secondary-btn">Sair</button>
         </form>
+        <p class="form-help">Criar conta: identificador com 3-120 caracteres (a-z, 0-9, ., _, -, @) e senha com mínimo de 8 caracteres contendo letra e número.</p>
         <p id="session-status" aria-live="polite">Sessão: não autenticado (modo offline local).</p>
         <p id="sync-status" aria-live="polite">Sincronização: verificando conectividade...</p>
         <p id="data-origin-status" aria-live="polite">Origem dos dados: local pendente.</p>

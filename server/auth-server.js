@@ -110,6 +110,73 @@ function normalizeIdentifier(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function validateIdentifier(identifier) {
+  const normalized = normalizeIdentifier(identifier);
+  if (!normalized) {
+    return { valid: false, reason: 'invalid-identifier', message: 'Informe um identificador válido.' };
+  }
+
+  if (normalized.length < 3 || normalized.length > 120) {
+    return { valid: false, reason: 'invalid-identifier', message: 'Identificador deve ter entre 3 e 120 caracteres.' };
+  }
+
+  const identifierPattern = /^[a-z0-9](?:[a-z0-9._@-]*[a-z0-9])?$/;
+  if (!identifierPattern.test(normalized)) {
+    return {
+      valid: false,
+      reason: 'invalid-identifier',
+      message: 'Identificador permite apenas letras minúsculas, números e os símbolos ., _, -, @.',
+    };
+  }
+
+  return { valid: true, identifier: normalized };
+}
+
+function validatePasswordPolicy(secret) {
+  const password = String(secret || '');
+  if (password.length < 8) {
+    return {
+      valid: false,
+      reason: 'weak-password',
+      message: 'Senha deve ter no mínimo 8 caracteres.',
+    };
+  }
+
+  if (!/[a-zA-Z]/.test(password) || !/\d/.test(password)) {
+    return {
+      valid: false,
+      reason: 'weak-password',
+      message: 'Senha deve conter pelo menos uma letra e um número.',
+    };
+  }
+
+  return { valid: true };
+}
+
+function sendApiError(res, statusCode, reason, message, details = null) {
+  const payload = {
+    ok: false,
+    error: {
+      reason,
+      message,
+    },
+  };
+
+  if (details && typeof details === 'object') {
+    payload.error.details = details;
+  }
+
+  return res.status(statusCode).json(payload);
+}
+
+function sendApiSuccess(res, statusCode, message, data = {}) {
+  return res.status(statusCode).json({
+    ok: true,
+    message,
+    data,
+  });
+}
+
 function nowIsoString() {
   return new Date().toISOString();
 }
@@ -376,6 +443,47 @@ function rowToChange(row) {
 }
 
 app.use(enforceHttps);
+
+app.post('/auth/register', async (req, res) => {
+  const identifierValidation = validateIdentifier(req.body?.identifier);
+  if (!identifierValidation.valid) {
+    writeAuditLog({ identifier: normalizeIdentifier(req.body?.identifier), eventType: 'register-failed-invalid-identifier', success: false, req });
+    return sendApiError(res, 400, identifierValidation.reason, identifierValidation.message);
+  }
+
+  const identifier = identifierValidation.identifier;
+  const secret = String(req.body?.secret || '');
+  const passwordValidation = validatePasswordPolicy(secret);
+  if (!passwordValidation.valid) {
+    writeAuditLog({ identifier, eventType: 'register-failed-weak-password', success: false, req });
+    return sendApiError(res, 400, passwordValidation.reason, passwordValidation.message);
+  }
+
+  const existingUser = db.prepare('SELECT id FROM users WHERE identifier = ? LIMIT 1').get(identifier);
+  if (existingUser) {
+    writeAuditLog({ userId: existingUser.id, identifier, eventType: 'register-failed-identifier-already-in-use', success: false, req });
+    return sendApiError(res, 409, 'identifier-already-in-use', 'Este identificador já está em uso.');
+  }
+
+  const passwordHash = await bcrypt.hash(secret, BCRYPT_ROUNDS);
+  const result = db.prepare(`
+    INSERT INTO users (identifier, password_hash, is_active, failed_login_attempts, lock_until)
+    VALUES (?, ?, 1, 0, NULL)
+  `).run(identifier, passwordHash);
+
+  const userId = Number(result.lastInsertRowid);
+  const session = issueAccessToken({ id: userId, identifier });
+  const refreshToken = createRefreshTokenRecord(userId);
+  setRefreshCookie(res, refreshToken.token);
+
+  writeAuditLog({ userId, identifier, eventType: 'register-success', success: true, req });
+  return sendApiSuccess(res, 201, 'Conta criada com sucesso.', {
+    identifier,
+    token: session.token,
+    expiresAt: session.expiresAt,
+    authenticated: true,
+  });
+});
 
 app.post('/auth/login', async (req, res) => {
   const identifier = normalizeIdentifier(req.body?.identifier);

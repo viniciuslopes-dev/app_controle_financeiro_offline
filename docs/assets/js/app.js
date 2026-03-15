@@ -45,6 +45,7 @@ const importDataButton = document.getElementById('import-data');
 const sessionForm = document.getElementById('session-form');
 const authIdentifierInput = document.getElementById('auth-identifier');
 const authSecretInput = document.getElementById('auth-secret');
+const createAccountButton = document.getElementById('create-account-button');
 const signOutButton = document.getElementById('sign-out-button');
 const sessionStatusEl = document.getElementById('session-status');
 const syncStatusEl = document.getElementById('sync-status');
@@ -282,6 +283,39 @@ async function loadSession() {
   }
 }
 
+function parseAuthResponse(payload, fallbackIdentifier) {
+  const data = payload && typeof payload.data === 'object' ? payload.data : payload;
+  const token = String(data?.token || '').trim();
+  if (!token) {
+    return { ok: false, reason: 'invalid-token', message: 'Resposta de autenticação inválida.' };
+  }
+
+  return {
+    ok: true,
+    user: {
+      identifier: normalizeText(String(data?.identifier || fallbackIdentifier || '')),
+      signedInAt: new Date().toISOString(),
+      provider: 'backend-api',
+      token,
+      expiresAt: String(data?.expiresAt || ''),
+    },
+  };
+}
+
+function parseApiError(payload) {
+  if (!payload || typeof payload !== 'object') return {};
+  if (payload.error && typeof payload.error === 'object') {
+    return {
+      reason: String(payload.error.reason || '').trim(),
+      message: String(payload.error.message || '').trim(),
+    };
+  }
+  return {
+    reason: String(payload.reason || '').trim(),
+    message: String(payload.message || '').trim(),
+  };
+}
+
 async function signIn(identifier, secret) {
   const normalizedIdentifier = normalizeText(String(identifier || ''));
   const normalizedSecret = String(secret || '').trim();
@@ -300,38 +334,71 @@ async function signIn(identifier, secret) {
     });
 
     const payload = await response.json().catch(() => ({}));
+    const apiError = parseApiError(payload);
 
     if (!response.ok) {
-      if (payload.reason === 'account-not-found') {
+      if (apiError.reason === 'account-not-found') {
         return { ok: false, reason: 'account-not-found', message: 'Conta inexistente.' };
       }
-      if (payload.reason === 'invalid-credentials') {
+      if (apiError.reason === 'invalid-credentials') {
         return { ok: false, reason: 'invalid-credentials', message: 'Credenciais inválidas.' };
       }
-      if (payload.reason === 'account-locked') {
-        return { ok: false, reason: 'account-locked', message: payload.message || 'Conta temporariamente bloqueada.' };
+      if (apiError.reason === 'account-locked') {
+        return { ok: false, reason: 'account-locked', message: apiError.message || 'Conta temporariamente bloqueada.' };
       }
-      if (payload.reason === 'too-many-attempts') {
-        return { ok: false, reason: 'too-many-attempts', message: payload.message || 'Muitas tentativas. Tente novamente depois.' };
+      if (apiError.reason === 'too-many-attempts') {
+        return { ok: false, reason: 'too-many-attempts', message: apiError.message || 'Muitas tentativas. Tente novamente depois.' };
       }
-      return { ok: false, reason: 'auth-failed', message: payload.message || 'Não foi possível autenticar agora.' };
+      return { ok: false, reason: 'auth-failed', message: apiError.message || 'Não foi possível autenticar agora.' };
     }
 
-    const user = {
-      identifier: normalizeText(String(payload.identifier || normalizedIdentifier)),
-      signedInAt: new Date().toISOString(),
-      provider: 'backend-api',
-      token: String(payload.token || '').trim(),
-      expiresAt: String(payload.expiresAt || ''),
-    };
+    const parsed = parseAuthResponse(payload, normalizedIdentifier);
+    if (!parsed.ok) return parsed;
 
-    if (!user.token) {
-      return { ok: false, reason: 'invalid-token', message: 'Resposta de autenticação inválida.' };
+    currentUser = parsed.user;
+    persistSession(parsed.user);
+    return parsed;
+  } catch {
+    return { ok: false, reason: 'network-error', message: 'Não foi possível conectar ao servidor de autenticação.' };
+  }
+}
+
+async function registerAccount(identifier, secret) {
+  const normalizedIdentifier = normalizeText(String(identifier || ''));
+  const normalizedSecret = String(secret || '').trim();
+  if (!normalizedIdentifier || !normalizedSecret) {
+    return { ok: false, reason: 'invalid-input', message: 'Informe identificador e senha.' };
+  }
+
+  try {
+    const response = await fetch(getAuthApiUrl('/auth/register'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ identifier: normalizedIdentifier, secret: normalizedSecret }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    const apiError = parseApiError(payload);
+
+    if (!response.ok) {
+      if (apiError.reason === 'identifier-already-in-use') {
+        return { ok: false, reason: 'identifier-already-in-use', message: 'Este identificador já está em uso.' };
+      }
+      if (apiError.reason === 'invalid-identifier' || apiError.reason === 'weak-password') {
+        return { ok: false, reason: apiError.reason, message: apiError.message || 'Dados de cadastro inválidos.' };
+      }
+      return { ok: false, reason: 'register-failed', message: apiError.message || 'Não foi possível criar sua conta agora.' };
     }
 
-    currentUser = user;
-    persistSession(user);
-    return { ok: true, user };
+    const parsed = parseAuthResponse(payload, normalizedIdentifier);
+    if (!parsed.ok) return parsed;
+
+    currentUser = parsed.user;
+    persistSession(parsed.user);
+    return { ...parsed, message: String(payload.message || 'Conta criada com sucesso.') };
   } catch {
     return { ok: false, reason: 'network-error', message: 'Não foi possível conectar ao servidor de autenticação.' };
   }
@@ -2945,6 +3012,26 @@ if (sessionForm) {
     lastSyncError = null;
     hasPendingConflict = false;
     renderSessionState();
+    await handleRemoteBackupOnSignIn();
+  });
+}
+
+if (createAccountButton) {
+  createAccountButton.addEventListener('click', async () => {
+    const result = await registerAccount(
+      authIdentifierInput ? authIdentifierInput.value : '',
+      authSecretInput ? authSecretInput.value : '',
+    );
+
+    if (!result.ok) {
+      window.alert(result.message || 'Não foi possível criar conta.');
+      return;
+    }
+
+    lastSyncError = null;
+    hasPendingConflict = false;
+    renderSessionState();
+    window.alert(result.message || 'Conta criada e autenticada com sucesso.');
     await handleRemoteBackupOnSignIn();
   });
 }
