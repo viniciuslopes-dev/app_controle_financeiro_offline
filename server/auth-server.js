@@ -29,6 +29,21 @@ db.exec(`
     saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
+  CREATE TABLE IF NOT EXISTS sync_transactions (
+    user_id INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    data TEXT,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT,
+    changed_at TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    etag TEXT NOT NULL,
+    device_id TEXT,
+    PRIMARY KEY (user_id, id),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_sync_transactions_user_changed
+    ON sync_transactions(user_id, changed_at);
 `);
 
 const app = express();
@@ -37,6 +52,28 @@ app.use(cors({ origin: true, credentials: true }));
 
 function normalizeIdentifier(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+function nowIsoString() {
+  return new Date().toISOString();
+}
+
+function sanitizeIsoDate(value) {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (!text) return null;
+  const stamp = new Date(text).getTime();
+  return Number.isNaN(stamp) ? null : new Date(stamp).toISOString();
+}
+
+function parseVersion(value, fallback = 1) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback;
+  return parsed;
+}
+
+function buildEtag(id, version) {
+  return `W/\"${id}:${version}\"`;
 }
 
 function issueSessionToken(user) {
@@ -71,6 +108,52 @@ function authenticateBearerToken(req, res, next) {
   } catch {
     return res.status(401).json({ reason: 'session-expired', message: 'Sessão expirada.' });
   }
+}
+
+function normalizeClientChange(rawChange, defaultDeviceId) {
+  if (!rawChange || typeof rawChange !== 'object') return null;
+  const id = typeof rawChange.id === 'string' ? rawChange.id.trim() : '';
+  if (!id) return null;
+
+  const updatedAt = sanitizeIsoDate(rawChange.updated_at) || nowIsoString();
+  const deletedAt = sanitizeIsoDate(rawChange.deleted_at);
+  const version = parseVersion(rawChange.version, 1);
+  const baseVersion = Number.isInteger(Number(rawChange.base_version)) && Number(rawChange.base_version) >= 0
+    ? Number(rawChange.base_version)
+    : Math.max(0, version - 1);
+  const deviceId = String(rawChange.device_id || defaultDeviceId || '').trim() || null;
+  const payload = rawChange.data && typeof rawChange.data === 'object' ? rawChange.data : null;
+
+  return {
+    id,
+    updatedAt,
+    deletedAt,
+    version,
+    baseVersion,
+    deviceId,
+    data: deletedAt ? null : payload,
+  };
+}
+
+function rowToChange(row) {
+  let data = null;
+  if (row.data) {
+    try {
+      data = JSON.parse(row.data);
+    } catch {
+      data = null;
+    }
+  }
+
+  return {
+    id: row.id,
+    updated_at: row.updated_at,
+    deleted_at: row.deleted_at,
+    version: row.version,
+    etag: row.etag,
+    device_id: row.device_id,
+    data,
+  };
 }
 
 app.post('/auth/login', async (req, res) => {
@@ -150,7 +233,7 @@ app.put('/users/me/backup', authenticateBearerToken, (req, res) => {
     return res.status(400).json({ reason: 'invalid-payload', message: 'Payload de backup inválido.' });
   }
 
-  const savedAt = new Date().toISOString();
+  const savedAt = nowIsoString();
   db.prepare(`
     INSERT INTO user_backups (user_id, payload, saved_at)
     VALUES (?, ?, ?)
@@ -159,6 +242,149 @@ app.put('/users/me/backup', authenticateBearerToken, (req, res) => {
   `).run(userId, JSON.stringify(payload), savedAt);
 
   return res.status(200).json({ ok: true, savedAt });
+});
+
+app.get('/users/me/changes', authenticateBearerToken, (req, res) => {
+  const userId = Number(req.auth.sub);
+  const since = sanitizeIsoDate(req.query.since);
+
+  const rows = since
+    ? db.prepare(`
+      SELECT id, data, updated_at, deleted_at, version, etag, device_id, changed_at
+      FROM sync_transactions
+      WHERE user_id = ? AND changed_at > ?
+      ORDER BY changed_at ASC
+    `).all(userId, since)
+    : db.prepare(`
+      SELECT id, data, updated_at, deleted_at, version, etag, device_id, changed_at
+      FROM sync_transactions
+      WHERE user_id = ?
+      ORDER BY changed_at ASC
+    `).all(userId);
+
+  const cursor = rows.length ? rows[rows.length - 1].changed_at : (since || nowIsoString());
+  return res.status(200).json({
+    cursor,
+    changes: rows.map(rowToChange),
+  });
+});
+
+app.put('/users/me/changes', authenticateBearerToken, (req, res) => {
+  const userId = Number(req.auth.sub);
+  const incomingChanges = Array.isArray(req.body?.changes) ? req.body.changes : null;
+
+  if (!incomingChanges) {
+    return res.status(400).json({ reason: 'invalid-payload', message: 'A lista de alterações é obrigatória.' });
+  }
+
+  const defaultDeviceId = String(req.body?.device_id || '').trim() || null;
+  const normalized = incomingChanges
+    .map((change) => normalizeClientChange(change, defaultDeviceId))
+    .filter(Boolean);
+
+  const upsert = db.prepare(`
+    INSERT INTO sync_transactions (
+      user_id, id, data, updated_at, deleted_at, changed_at, version, etag, device_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, id)
+    DO UPDATE SET
+      data = excluded.data,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at,
+      changed_at = excluded.changed_at,
+      version = excluded.version,
+      etag = excluded.etag,
+      device_id = excluded.device_id
+  `);
+  const findOne = db.prepare('SELECT id, data, updated_at, deleted_at, changed_at, version, etag, device_id FROM sync_transactions WHERE user_id = ? AND id = ? LIMIT 1');
+
+  const applied = [];
+  const conflicts = [];
+
+  const run = db.transaction(() => {
+    normalized.forEach((change) => {
+      const existing = findOne.get(userId, change.id);
+
+      if (!existing) {
+        const version = parseVersion(change.version, 1);
+        const changedAt = nowIsoString();
+        const etag = buildEtag(change.id, version);
+        upsert.run(
+          userId,
+          change.id,
+          change.data ? JSON.stringify(change.data) : null,
+          change.updatedAt,
+          change.deletedAt,
+          changedAt,
+          version,
+          etag,
+          change.deviceId,
+        );
+
+        applied.push({
+          id: change.id,
+          updated_at: change.updatedAt,
+          deleted_at: change.deletedAt,
+          version,
+          etag,
+          device_id: change.deviceId,
+        });
+        return;
+      }
+
+      if (change.baseVersion !== existing.version) {
+        conflicts.push({
+          id: change.id,
+          reason: 'version-conflict',
+          expected_version: existing.version,
+          received_base_version: change.baseVersion,
+          server: rowToChange(existing),
+          client: {
+            id: change.id,
+            updated_at: change.updatedAt,
+            deleted_at: change.deletedAt,
+            version: change.version,
+            device_id: change.deviceId,
+            data: change.data,
+          },
+        });
+        return;
+      }
+
+      const version = existing.version + 1;
+      const changedAt = nowIsoString();
+      const etag = buildEtag(change.id, version);
+      upsert.run(
+        userId,
+        change.id,
+        change.data ? JSON.stringify(change.data) : null,
+        change.updatedAt,
+        change.deletedAt,
+        changedAt,
+        version,
+        etag,
+        change.deviceId,
+      );
+
+      applied.push({
+        id: change.id,
+        updated_at: change.updatedAt,
+        deleted_at: change.deletedAt,
+        version,
+        etag,
+        device_id: change.deviceId,
+      });
+    });
+  });
+
+  run();
+
+  return res.status(200).json({
+    ok: true,
+    applied,
+    conflicts,
+    cursor: nowIsoString(),
+  });
 });
 
 app.listen(PORT, () => {

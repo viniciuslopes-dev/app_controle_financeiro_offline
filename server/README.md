@@ -24,8 +24,37 @@
 
 - `PUT /users/me/backup`
   - Header: `Authorization: Bearer <token>`
-  - Body JSON: `{ "payload": { "version": "1.0", "transactions": [...], "categories": {...} } }`
+  - Body JSON: `{ "payload": { "version": "1.1", "transactions": [...], "categories": {...} } }`
   - Resposta 200: `{ "ok": true, "savedAt": "ISO" }`
+
+- `GET /users/me/changes?since=<cursor-iso>`
+  - Header: `Authorization: Bearer <token>`
+  - Retorna somente alterações incrementais desde o cursor informado.
+  - Resposta 200: `{ "cursor": "ISO", "changes": [{ "id", "updated_at", "deleted_at", "version", "etag", "device_id", "data" }] }`
+  - `deleted_at` preenchido representa tombstone (remoção sincronizada entre aparelhos).
+
+- `PUT /users/me/changes`
+  - Header: `Authorization: Bearer <token>`
+  - Body JSON:
+    ```json
+    {
+      "device_id": "device-xyz",
+      "changes": [
+        {
+          "id": "uuid",
+          "updated_at": "ISO",
+          "deleted_at": null,
+          "version": 4,
+          "base_version": 3,
+          "etag": "W/\"uuid:4\"",
+          "device_id": "device-xyz",
+          "data": { "...lancamento" }
+        }
+      ]
+    }
+    ```
+  - Resposta 200: `{ "ok": true, "applied": [...], "conflicts": [...], "cursor": "ISO" }`
+  - Conflitos são resolvidos por versionamento otimista (base_version != versão atual do servidor).
 
 ## Configuração rápida
 
