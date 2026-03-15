@@ -4,6 +4,8 @@ const CATEGORY_STORAGE_KEY = 'finance_offline_categories_v1';
 const SESSION_STORAGE_KEY = 'finance_offline_session_v1';
 const SAFETY_SNAPSHOT_STORAGE_KEY = 'finance_offline_safety_snapshots_v1';
 const DEVICE_ID_STORAGE_KEY = 'finance_offline_device_id_v1';
+const SYNC_QUEUE_STORAGE_KEY = 'finance_offline_sync_queue_v1';
+const SYNC_CURSOR_STORAGE_KEY = 'finance_offline_sync_cursor_v1';
 
 const DEFAULT_CATEGORIES = {
   Moradia: ['Aluguel', 'Luz', 'Água', 'Internet'],
@@ -97,6 +99,9 @@ const editImpactEl = document.getElementById('edit-impact');
 const cancelEditButton = document.getElementById('edit-cancel');
 
 let currentUser = null;
+let isApplyingRemoteChanges = false;
+let syncRetryTimer = null;
+let syncRetryAttempt = 0;
 const AUTH_API_BASE_URL = normalizeText(String(window.AUTH_API_BASE_URL || '')).replace(/\/$/, '');
 
 function getAuthApiUrl(path) {
@@ -245,6 +250,10 @@ async function signOut() {
   const token = currentUser ? currentUser.token : '';
   currentUser = null;
   persistSession(null);
+  if (syncRetryTimer) {
+    window.clearTimeout(syncRetryTimer);
+    syncRetryTimer = null;
+  }
 
   if (!token) return;
 
@@ -263,12 +272,14 @@ async function signOut() {
 function updateSyncStatus() {
   if (!syncStatusEl) return;
 
+  const pendingChanges = loadSyncQueue().length;
+
   if (navigator.onLine) {
-    syncStatusEl.textContent = 'Sincronização: internet disponível. Dados locais continuam ativos e prontos para sincronizar.';
+    syncStatusEl.textContent = `Sincronização incremental ativa. Fila offline pendente: ${pendingChanges} alteração(ões).`;
     return;
   }
 
-  syncStatusEl.textContent = 'Sincronização: sem internet (modo offline). O app segue operando com localStorage normalmente.';
+  syncStatusEl.textContent = `Sem internet (modo offline). Fila local pendente: ${pendingChanges} alteração(ões).`;
 }
 
 function renderSessionState() {
@@ -355,6 +366,48 @@ function parseTimestamp(value) {
   if (typeof value !== 'string') return null;
   const parsed = new Date(value).getTime();
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+function loadSyncQueue() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SYNC_QUEUE_STORAGE_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSyncQueue(queue) {
+  const normalized = Array.isArray(queue) ? queue : [];
+  localStorage.setItem(SYNC_QUEUE_STORAGE_KEY, JSON.stringify(normalized));
+}
+
+function enqueueSyncChanges(changes) {
+  if (!Array.isArray(changes) || !changes.length || isApplyingRemoteChanges) return;
+  const queue = loadSyncQueue();
+  queue.push(...changes);
+  saveSyncQueue(queue);
+  scheduleSyncRetry(0);
+}
+
+function getSyncCursor() {
+  const cursor = normalizeText(String(localStorage.getItem(SYNC_CURSOR_STORAGE_KEY) || ''));
+  return cursor || null;
+}
+
+function setSyncCursor(cursor) {
+  if (!cursor) {
+    localStorage.removeItem(SYNC_CURSOR_STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(SYNC_CURSOR_STORAGE_KEY, String(cursor));
+}
+
+function computeSyncBackoffMs(attempt) {
+  const base = 1200;
+  const capped = Math.min(30000, base * (2 ** Math.max(0, attempt)));
+  const jitter = Math.floor(Math.random() * 500);
+  return capped + jitter;
 }
 
 function createSafetySnapshot(reason = 'manual') {
@@ -597,20 +650,26 @@ function migrateLegacyData() {
   }
 }
 
-function loadTransactions() {
+function loadTransactions(options = {}) {
+  const includeDeleted = !!options.includeDeleted;
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-    return Array.isArray(parsed)
+    const sanitized = Array.isArray(parsed)
       ? parsed.map((tx) => sanitizeTransaction(tx, { keepUpdatedAt: true })).filter(Boolean)
       : [];
+
+    return includeDeleted ? sanitized : sanitized.filter((tx) => !tx.deletedAt);
   } catch {
     return [];
   }
 }
 
 function saveTransactions(items) {
-  const existing = loadTransactions();
+  const existing = loadTransactions({ includeDeleted: true });
   const existingById = new Map(existing.map((tx) => [tx.id, tx]));
+  const now = nowIsoString();
+  const changes = [];
+
   const sanitized = Array.isArray(items)
     ? items
       .map((item) => sanitizeTransaction(item, { keepUpdatedAt: true }))
@@ -618,19 +677,70 @@ function saveTransactions(items) {
       .map((tx) => {
         const previous = existingById.get(tx.id);
         const isSameData = previous
+          && !previous.deletedAt
           && JSON.stringify(normalizeTransactionComparable(previous)) === JSON.stringify(normalizeTransactionComparable(tx));
 
-        return {
+        const nextVersion = isSameData
+          ? Number(previous.version || 1)
+          : Number(previous && previous.version ? previous.version : 0) + 1;
+        const syncedTx = {
           ...tx,
-          updatedAt: isSameData && typeof previous.updatedAt === 'string' ? previous.updatedAt : nowIsoString(),
+          updatedAt: isSameData && typeof previous.updatedAt === 'string' ? previous.updatedAt : now,
+          deletedAt: null,
+          version: nextVersion,
+          etag: `local-${tx.id}-${nextVersion}`,
           deviceId: isSameData
             ? (previous && previous.deviceId ? previous.deviceId : (tx.deviceId || getDeviceId()))
             : getDeviceId(),
         };
+
+        if (!previous || previous.deletedAt || !isSameData) {
+          changes.push({
+            id: syncedTx.id,
+            updated_at: syncedTx.updatedAt,
+            deleted_at: null,
+            version: syncedTx.version,
+            base_version: previous ? Number(previous.version || 0) : 0,
+            etag: syncedTx.etag,
+            device_id: syncedTx.deviceId,
+            data: normalizeTransactionComparable(syncedTx),
+          });
+        }
+
+        return syncedTx;
       })
     : [];
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
+  const sanitizedById = new Map(sanitized.map((tx) => [tx.id, tx]));
+  const preservedDeleted = existing.filter((tx) => tx.deletedAt && !sanitizedById.has(tx.id));
+
+  existing.forEach((tx) => {
+    if (tx.deletedAt || sanitizedById.has(tx.id)) return;
+    const tombstoneVersion = Number(tx.version || 0) + 1;
+    const tombstone = {
+      ...tx,
+      deletedAt: now,
+      updatedAt: now,
+      version: tombstoneVersion,
+      etag: `local-${tx.id}-${tombstoneVersion}`,
+      deviceId: getDeviceId(),
+    };
+
+    preservedDeleted.push(tombstone);
+    changes.push({
+      id: tx.id,
+      updated_at: now,
+      deleted_at: now,
+      version: tombstoneVersion,
+      base_version: Number(tx.version || 0),
+      etag: tombstone.etag,
+      device_id: tombstone.deviceId,
+      data: null,
+    });
+  });
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify([...sanitized, ...preservedDeleted]));
+  enqueueSyncChanges(changes);
 }
 
 function sanitizeTransaction(tx, options = {}) {
@@ -657,15 +767,18 @@ function sanitizeTransaction(tx, options = {}) {
     date,
     recurrence: tx.recurrence && typeof tx.recurrence === 'object' ? tx.recurrence : null,
     updatedAt: keepUpdatedAt ? (typeof tx.updatedAt === 'string' ? tx.updatedAt : nowIsoString()) : nowIsoString(),
+    deletedAt: keepUpdatedAt && typeof tx.deletedAt === 'string' ? tx.deletedAt : null,
+    version: Number.isInteger(Number(tx.version)) && Number(tx.version) > 0 ? Number(tx.version) : 1,
+    etag: typeof tx.etag === 'string' ? tx.etag : '',
     ...(typeof tx.deviceId === 'string' && normalizeText(tx.deviceId) ? { deviceId: normalizeText(tx.deviceId) } : (keepUpdatedAt ? {} : { deviceId: getDeviceId() })),
   };
 }
 
 function buildBackupPayload() {
   return {
-    version: '1.0',
+    version: '1.1',
     exportedAt: new Date().toISOString(),
-    transactions: loadTransactions(),
+    transactions: loadTransactions({ includeDeleted: true }),
     categories: loadCategories(),
   };
 }
@@ -740,6 +853,149 @@ async function downloadBackupForUser() {
   }
 }
 
+function toServerChangePayload(change) {
+  return {
+    id: change.id,
+    updated_at: change.updated_at,
+    deleted_at: change.deleted_at,
+    version: change.version,
+    base_version: change.base_version,
+    etag: change.etag,
+    device_id: change.device_id,
+    data: change.data,
+  };
+}
+
+function fromServerChange(change) {
+  const baseData = change && change.data && typeof change.data === 'object' ? change.data : {};
+  return sanitizeTransaction({
+    ...baseData,
+    id: change.id,
+    updatedAt: change.updated_at,
+    deletedAt: change.deleted_at,
+    version: change.version,
+    etag: change.etag,
+    deviceId: change.device_id,
+  }, { keepUpdatedAt: true });
+}
+
+function applyRemoteChanges(changes) {
+  if (!Array.isArray(changes) || !changes.length) return;
+  const localAll = loadTransactions({ includeDeleted: true });
+  const localMap = new Map(localAll.map((tx) => [tx.id, tx]));
+
+  changes.forEach((rawChange) => {
+    const remoteTx = fromServerChange(rawChange);
+    if (!remoteTx) return;
+    const localTx = localMap.get(remoteTx.id);
+    if (!localTx) {
+      localMap.set(remoteTx.id, remoteTx);
+      return;
+    }
+
+    const resolved = resolveTransactionConflict(localTx, remoteTx);
+    localMap.set(remoteTx.id, resolved);
+  });
+
+  isApplyingRemoteChanges = true;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(localMap.values())));
+  isApplyingRemoteChanges = false;
+}
+
+async function pushPendingChanges() {
+  const queue = loadSyncQueue();
+  if (!queue.length || !currentUser || !currentUser.token) return { ok: true, applied: 0, conflicts: [] };
+
+  const response = await fetch(getAuthApiUrl('/users/me/changes'), {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${currentUser.token}`,
+    },
+    body: JSON.stringify({
+      device_id: getDeviceId(),
+      changes: queue.map(toServerChangePayload),
+    }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return { ok: false, message: payload.message || 'Falha ao enviar alterações incrementais.' };
+  }
+
+  saveSyncQueue([]);
+  if (Array.isArray(payload.conflicts) && payload.conflicts.length) {
+    applyRemoteChanges(payload.conflicts.map((item) => item.server).filter(Boolean));
+  }
+
+  return {
+    ok: true,
+    applied: Array.isArray(payload.applied) ? payload.applied.length : queue.length,
+    conflicts: Array.isArray(payload.conflicts) ? payload.conflicts : [],
+  };
+}
+
+async function pullRemoteChanges() {
+  if (!currentUser || !currentUser.token) return { ok: true, imported: 0 };
+  const since = getSyncCursor();
+  const query = since ? `?since=${encodeURIComponent(since)}` : '';
+  const response = await fetch(getAuthApiUrl(`/users/me/changes${query}`), {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${currentUser.token}`,
+    },
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return { ok: false, message: payload.message || 'Falha ao baixar alterações incrementais.' };
+  }
+
+  const changes = Array.isArray(payload.changes) ? payload.changes : [];
+  applyRemoteChanges(changes);
+  if (payload.cursor) setSyncCursor(payload.cursor);
+  return { ok: true, imported: changes.length };
+}
+
+async function runIncrementalSync() {
+  if (!navigator.onLine || !currentUser || !currentUser.token) return { ok: false, skipped: true };
+
+  const pushResult = await pushPendingChanges();
+  if (!pushResult.ok) return pushResult;
+
+  const pullResult = await pullRemoteChanges();
+  if (!pullResult.ok) return pullResult;
+
+  syncRetryAttempt = 0;
+  updateSyncStatus();
+  render();
+  return {
+    ok: true,
+    pushed: pushResult.applied,
+    imported: pullResult.imported,
+    conflicts: pushResult.conflicts || [],
+  };
+}
+
+function scheduleSyncRetry(delayMs = null) {
+  if (syncRetryTimer) {
+    window.clearTimeout(syncRetryTimer);
+    syncRetryTimer = null;
+  }
+
+  const waitMs = typeof delayMs === 'number' ? delayMs : computeSyncBackoffMs(syncRetryAttempt);
+  syncRetryTimer = window.setTimeout(async () => {
+    const result = await runIncrementalSync();
+    if (result.ok) {
+      syncRetryAttempt = 0;
+      return;
+    }
+
+    syncRetryAttempt += 1;
+    scheduleSyncRetry();
+  }, Math.max(0, waitMs));
+}
+
 function downloadBackupFile(payload) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -755,7 +1011,7 @@ function downloadBackupFile(payload) {
 
 function validateBackupPayload(payload) {
   if (!payload || typeof payload !== 'object') return { valid: false, message: 'Arquivo inválido.' };
-  if (payload.version !== '1.0') {
+  if (payload.version !== '1.0' && payload.version !== '1.1') {
     return { valid: false, message: 'Versão de backup não suportada. Exporte um novo arquivo no app de origem.' };
   }
 
@@ -835,6 +1091,39 @@ function normalizeTransactionComparable(tx) {
   };
 }
 
+function mergeTransactionFields(localTx, remoteTx, preferRemote) {
+  const winner = preferRemote ? remoteTx : localTx;
+  const loser = preferRemote ? localTx : remoteTx;
+  return {
+    ...winner,
+    description: winner.description || loser.description,
+    category: winner.category || loser.category,
+    subcategory: winner.subcategory || loser.subcategory,
+    recurrence: winner.recurrence || loser.recurrence || null,
+  };
+}
+
+function resolveTransactionConflict(localTx, remoteTx) {
+  const localVersion = Number(localTx.version || 1);
+  const remoteVersion = Number(remoteTx.version || 1);
+  if (remoteVersion !== localVersion) {
+    return remoteVersion > localVersion ? remoteTx : localTx;
+  }
+
+  if (localTx.deletedAt || remoteTx.deletedAt) {
+    if (localTx.deletedAt && remoteTx.deletedAt) {
+      return (parseTimestamp(remoteTx.updatedAt) || 0) >= (parseTimestamp(localTx.updatedAt) || 0)
+        ? remoteTx
+        : localTx;
+    }
+    return remoteTx.deletedAt ? remoteTx : localTx;
+  }
+
+  const localStamp = parseTimestamp(localTx.updatedAt) || 0;
+  const remoteStamp = parseTimestamp(remoteTx.updatedAt) || 0;
+  return mergeTransactionFields(localTx, remoteTx, remoteStamp >= localStamp);
+}
+
 function mergeTransactions(localTxs, remoteTxs) {
   const localMap = new Map(
     (Array.isArray(localTxs) ? localTxs : [])
@@ -870,36 +1159,39 @@ function mergeTransactions(localTxs, remoteTxs) {
       return;
     }
 
-    const localStamp = parseTimestamp(localTx.updatedAt) || 0;
-    const remoteStamp = parseTimestamp(remoteTx.updatedAt) || 0;
     const sameData = JSON.stringify(normalizeTransactionComparable(localTx)) === JSON.stringify(normalizeTransactionComparable(remoteTx));
+    const sameVersion = Number(localTx.version || 1) === Number(remoteTx.version || 1);
 
     if (sameData) {
-      merged.push(localStamp >= remoteStamp ? localTx : remoteTx);
+      merged.push(resolveTransactionConflict(localTx, remoteTx));
       summary.kept += 1;
       return;
     }
 
-    if (localStamp === remoteStamp) {
+    if (sameVersion) {
       summary.conflicting += 1;
       conflicts.push({
         id,
         local: localTx,
         remote: remoteTx,
       });
-      merged.push(localTx);
-      summary.kept += 1;
+      const mergedTx = resolveTransactionConflict(localTx, remoteTx);
+      merged.push(mergedTx);
+      if (mergedTx === remoteTx) {
+        summary.imported += 1;
+      } else {
+        summary.kept += 1;
+      }
       return;
     }
 
-    if (remoteStamp > localStamp) {
-      merged.push(remoteTx);
+    const mergedTx = resolveTransactionConflict(localTx, remoteTx);
+    merged.push(mergedTx);
+    if (mergedTx === remoteTx) {
       summary.imported += 1;
-      return;
+    } else {
+      summary.kept += 1;
     }
-
-    merged.push(localTx);
-    summary.kept += 1;
   });
 
   return { transactions: merged, summary, conflicts };
@@ -937,7 +1229,7 @@ function mergeBackupPayloads(localPayload, remotePayload) {
 
   return {
     payload: {
-      version: '1.0',
+      version: '1.1',
       exportedAt: nowIsoString(),
       transactions: mergedTxResult.transactions,
       categories,
@@ -960,56 +1252,23 @@ function importBackupPayload(payload) {
 }
 
 async function handleRemoteBackupOnSignIn() {
-  const remoteResult = await downloadBackupForUser();
-  if (!remoteResult.ok) {
-    window.alert(remoteResult.message || 'Não foi possível baixar o backup remoto da conta.');
+  const result = await runIncrementalSync();
+  if (!result.ok && !result.skipped) {
+    window.alert(result.message || 'Falha na sincronização incremental. A fila offline será reenviada automaticamente.');
+    scheduleSyncRetry();
     return;
   }
 
-  if (!remoteResult.found) {
-    const uploadResult = await uploadBackupForUser(buildBackupPayload());
-    if (!uploadResult.ok) {
-      window.alert(uploadResult.message || 'Não foi possível enviar o backup local para a conta.');
-    }
-    return;
-  }
-
-  const localPayload = buildBackupPayload();
-  const mergedResult = mergeBackupPayloads(localPayload, remoteResult.payload);
-
-  if (mergedResult.conflicts.length) {
-    const preview = mergedResult.conflicts
+  if (result.ok && Array.isArray(result.conflicts) && result.conflicts.length) {
+    const preview = result.conflicts
       .slice(0, 5)
-      .map((conflict) => `• ID ${conflict.id}: local(${conflict.local.updatedAt}) x remoto(${conflict.remote.updatedAt})`)
+      .map((conflict) => `• ID ${conflict.id}: versão esperada ${conflict.expected_version}, base enviada ${conflict.received_base_version}`)
       .join('\n');
 
-    const confirmed = window.confirm(
-      `Foram detectados ${mergedResult.conflicts.length} conflito(s) real(is) de atualização.\n\n${preview}${mergedResult.conflicts.length > 5 ? '\n• ...' : ''}\n\nContinuar aplicando a mescla automática (mais recente vence)?`,
+    window.alert(
+      `Conflitos detectados por versionamento otimista: ${result.conflicts.length}.\n\n${preview}${result.conflicts.length > 5 ? '\n• ...' : ''}\n\nRegra aplicada: maior versão vence; em empate, exclusão (tombstone) prevalece; sem exclusão, mescla por campos.`,
     );
-
-    if (!confirmed) {
-      window.alert('Sincronização cancelada. Nenhuma alteração foi aplicada.');
-      return;
-    }
   }
-
-  const applyResult = applyBackupPayload(mergedResult.payload, {
-    createSnapshot: true,
-    snapshotReason: 'before-signin-sync-merge',
-  });
-
-  if (!applyResult.ok) {
-    window.alert(applyResult.message || 'Não foi possível sincronizar os dados local + conta.');
-    return;
-  }
-
-  const uploadResult = await uploadBackupForUser(mergedResult.payload);
-  if (!uploadResult.ok) {
-    window.alert(`${formatSyncSummary(mergedResult.summary)}\n\nA aplicação local funcionou, mas falhou ao atualizar backup remoto.`);
-    return;
-  }
-
-  window.alert(formatSyncSummary(mergedResult.summary));
 }
 
 function formatMoney(value) {
@@ -2598,7 +2857,10 @@ if (signOutButton) {
   });
 }
 
-window.addEventListener('online', updateSyncStatus);
+window.addEventListener('online', () => {
+  updateSyncStatus();
+  scheduleSyncRetry(300);
+});
 window.addEventListener('offline', updateSyncStatus);
 
 if ('serviceWorker' in navigator) {
@@ -2617,6 +2879,7 @@ async function initializeApplication() {
   }
 
   renderSessionState();
+  if (currentUser) scheduleSyncRetry(300);
 
   migrateLegacyData();
   const txs = loadTransactions();
