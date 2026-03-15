@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DB_PATH = process.env.AUTH_DB_PATH || path.join(__dirname, 'auth.db');
+const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || 12);
 
 const identifier = String(process.argv[2] || process.env.AUTH_SEED_IDENTIFIER || '').trim().toLowerCase();
 const secret = String(process.argv[3] || process.env.AUTH_SEED_SECRET || '').trim();
@@ -26,7 +27,7 @@ db.exec(`
   );
 `);
 
-const hash = await bcrypt.hash(secret, 12);
+const hash = await bcrypt.hash(secret, BCRYPT_ROUNDS);
 
 const existing = db.prepare('SELECT id FROM users WHERE identifier = ? LIMIT 1').get(identifier);
 if (existing) {

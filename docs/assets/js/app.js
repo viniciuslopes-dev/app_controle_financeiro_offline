@@ -109,25 +109,6 @@ function getAuthApiUrl(path) {
   return `${AUTH_API_BASE_URL}${normalizedPath}`;
 }
 
-function decodeJwtPayload(token) {
-  if (typeof token !== 'string' || !token.includes('.')) return null;
-  try {
-    const payloadChunk = token.split('.')[1];
-    const normalized = payloadChunk.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-    const decoded = atob(padded);
-    return JSON.parse(decoded);
-  } catch {
-    return null;
-  }
-}
-
-function isTokenExpired(token) {
-  const payload = decodeJwtPayload(token);
-  if (!payload || typeof payload.exp !== 'number') return true;
-  return (payload.exp * 1000) <= Date.now();
-}
-
 function persistSession(session) {
   if (!session) {
     localStorage.removeItem(SESSION_STORAGE_KEY);
@@ -135,10 +116,10 @@ function persistSession(session) {
   }
 
   const safeSession = {
-    token: String(session.token || ''),
     expiresAt: String(session.expiresAt || ''),
     identifier: normalizeText(String(session.identifier || '')),
     provider: 'backend-api',
+    signedInAt: String(session.signedInAt || new Date().toISOString()),
   };
 
   localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(safeSession));
@@ -148,51 +129,82 @@ function getCurrentUser() {
   return currentUser;
 }
 
+async function refreshSessionToken() {
+  const response = await fetch(getAuthApiUrl('/auth/refresh'), {
+    method: 'POST',
+    credentials: 'include',
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return { ok: false, reason: payload.reason || 'refresh-failed' };
+  }
+
+  const token = String(payload.token || '').trim();
+  const identifier = normalizeText(String(payload.identifier || ''));
+  if (!token || !identifier) {
+    return { ok: false, reason: 'invalid-token' };
+  }
+
+  const session = {
+    identifier,
+    signedInAt: currentUser?.signedInAt || new Date().toISOString(),
+    provider: 'backend-api',
+    token,
+    expiresAt: String(payload.expiresAt || ''),
+  };
+
+  currentUser = session;
+  persistSession(session);
+  return { ok: true, user: session };
+}
+
+async function authFetch(path, options = {}, retryOnUnauthorized = true) {
+  if (!currentUser || !currentUser.token) {
+    const refreshed = await refreshSessionToken();
+    if (!refreshed.ok) return { response: null, reason: refreshed.reason || 'session-expired' };
+  }
+
+  const headers = new Headers(options.headers || {});
+  headers.set('Authorization', `Bearer ${currentUser.token}`);
+  const response = await fetch(getAuthApiUrl(path), {
+    ...options,
+    headers,
+    credentials: 'include',
+  });
+
+  if (response.status === 401 && retryOnUnauthorized) {
+    const refreshed = await refreshSessionToken();
+    if (!refreshed.ok) {
+      currentUser = null;
+      persistSession(null);
+      return { response, reason: 'session-expired' };
+    }
+
+    headers.set('Authorization', `Bearer ${currentUser.token}`);
+    const secondResponse = await fetch(getAuthApiUrl(path), {
+      ...options,
+      headers,
+      credentials: 'include',
+    });
+    return { response: secondResponse, reason: null };
+  }
+
+  return { response, reason: null };
+}
+
 async function loadSession() {
   try {
     const stored = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) || 'null');
-    if (!stored || typeof stored !== 'object') return null;
+    if (!stored || typeof stored !== 'object') return { ok: false, reason: 'invalid-session' };
 
-    const token = String(stored.token || '').trim();
-    const identifier = normalizeText(String(stored.identifier || ''));
-
-    if (!token || !identifier) {
-      persistSession(null);
-      return { ok: false, reason: 'invalid-session' };
-    }
-
-    if (isTokenExpired(token)) {
+    const refreshed = await refreshSessionToken();
+    if (!refreshed.ok) {
       persistSession(null);
       return { ok: false, reason: 'session-expired' };
     }
 
-    const response = await fetch(getAuthApiUrl('/auth/session'), {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (response.status === 401) {
-      persistSession(null);
-      return { ok: false, reason: 'session-expired' };
-    }
-
-    if (!response.ok) {
-      return { ok: false, reason: 'session-validation-failed' };
-    }
-
-    const payload = await response.json();
-    const session = {
-      token,
-      expiresAt: payload.expiresAt,
-      identifier: normalizeText(String(payload.identifier || identifier)),
-      provider: 'backend-api',
-      signedInAt: stored.signedInAt || new Date().toISOString(),
-    };
-
-    persistSession(session);
-    return { ok: true, user: session };
+    return { ok: true, user: refreshed.user };
   } catch {
     return { ok: false, reason: 'session-validation-failed' };
   }
@@ -211,6 +223,7 @@ async function signIn(identifier, secret) {
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include',
       body: JSON.stringify({ identifier: normalizedIdentifier, secret: normalizedSecret }),
     });
 
@@ -222,6 +235,12 @@ async function signIn(identifier, secret) {
       }
       if (payload.reason === 'invalid-credentials') {
         return { ok: false, reason: 'invalid-credentials', message: 'Credenciais inválidas.' };
+      }
+      if (payload.reason === 'account-locked') {
+        return { ok: false, reason: 'account-locked', message: payload.message || 'Conta temporariamente bloqueada.' };
+      }
+      if (payload.reason === 'too-many-attempts') {
+        return { ok: false, reason: 'too-many-attempts', message: payload.message || 'Muitas tentativas. Tente novamente depois.' };
       }
       return { ok: false, reason: 'auth-failed', message: payload.message || 'Não foi possível autenticar agora.' };
     }
@@ -247,7 +266,6 @@ async function signIn(identifier, secret) {
 }
 
 async function signOut() {
-  const token = currentUser ? currentUser.token : '';
   currentUser = null;
   persistSession(null);
   if (syncRetryTimer) {
@@ -255,14 +273,10 @@ async function signOut() {
     syncRetryTimer = null;
   }
 
-  if (!token) return;
-
   try {
     await fetch(getAuthApiUrl('/auth/logout'), {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      credentials: 'include',
     });
   } catch {
     // Ignora falhas de logout remoto.
@@ -784,7 +798,7 @@ function buildBackupPayload() {
 }
 
 async function uploadBackupForUser(payload) {
-  if (!currentUser || !currentUser.token) {
+  if (!currentUser) {
     return { ok: false, message: 'Sessão expirada. Entre novamente para sincronizar.' };
   }
 
@@ -794,14 +808,16 @@ async function uploadBackupForUser(payload) {
   }
 
   try {
-    const response = await fetch(getAuthApiUrl('/users/me/backup'), {
+    const { response } = await authFetch('/users/me/backup', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${currentUser.token}`,
       },
       body: JSON.stringify({ payload }),
     });
+    if (!response) {
+      return { ok: false, message: 'Sessão expirada. Entre novamente para sincronizar.' };
+    }
 
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -815,17 +831,15 @@ async function uploadBackupForUser(payload) {
 }
 
 async function downloadBackupForUser() {
-  if (!currentUser || !currentUser.token) {
+  if (!currentUser) {
     return { ok: false, message: 'Sessão expirada. Entre novamente para sincronizar.' };
   }
 
   try {
-    const response = await fetch(getAuthApiUrl('/users/me/backup'), {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${currentUser.token}`,
-      },
-    });
+    const { response } = await authFetch('/users/me/backup', { method: 'GET' });
+    if (!response) {
+      return { ok: false, message: 'Sessão expirada. Entre novamente para sincronizar.' };
+    }
 
     if (response.status === 404) {
       return { ok: true, found: false };
@@ -904,19 +918,22 @@ function applyRemoteChanges(changes) {
 
 async function pushPendingChanges() {
   const queue = loadSyncQueue();
-  if (!queue.length || !currentUser || !currentUser.token) return { ok: true, applied: 0, conflicts: [] };
+  if (!queue.length || !currentUser) return { ok: true, applied: 0, conflicts: [] };
 
-  const response = await fetch(getAuthApiUrl('/users/me/changes'), {
+  const { response } = await authFetch('/users/me/changes', {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${currentUser.token}`,
     },
     body: JSON.stringify({
       device_id: getDeviceId(),
       changes: queue.map(toServerChangePayload),
     }),
   });
+
+  if (!response) {
+    return { ok: false, message: 'Sessão expirada. Entre novamente para sincronizar.' };
+  }
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -936,15 +953,13 @@ async function pushPendingChanges() {
 }
 
 async function pullRemoteChanges() {
-  if (!currentUser || !currentUser.token) return { ok: true, imported: 0 };
+  if (!currentUser) return { ok: true, imported: 0 };
   const since = getSyncCursor();
   const query = since ? `?since=${encodeURIComponent(since)}` : '';
-  const response = await fetch(getAuthApiUrl(`/users/me/changes${query}`), {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${currentUser.token}`,
-    },
-  });
+  const { response } = await authFetch(`/users/me/changes${query}`, { method: 'GET' });
+  if (!response) {
+    return { ok: false, message: 'Sessão expirada. Entre novamente para sincronizar.' };
+  }
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -958,7 +973,7 @@ async function pullRemoteChanges() {
 }
 
 async function runIncrementalSync() {
-  if (!navigator.onLine || !currentUser || !currentUser.token) return { ok: false, skipped: true };
+  if (!navigator.onLine || !currentUser) return { ok: false, skipped: true };
 
   const pushResult = await pushPendingChanges();
   if (!pushResult.ok) return pushResult;
