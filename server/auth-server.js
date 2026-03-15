@@ -23,6 +23,12 @@ db.exec(`
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS user_backups (
+    user_id INTEGER PRIMARY KEY,
+    payload TEXT NOT NULL,
+    saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
 `);
 
 const app = express();
@@ -113,6 +119,46 @@ app.get('/auth/session', authenticateBearerToken, (req, res) => {
 
 app.post('/auth/logout', (_req, res) => {
   return res.status(204).send();
+});
+
+app.get('/users/me/backup', authenticateBearerToken, (req, res) => {
+  const userId = Number(req.auth.sub);
+  const backup = db
+    .prepare('SELECT payload, saved_at FROM user_backups WHERE user_id = ? LIMIT 1')
+    .get(userId);
+
+  if (!backup) {
+    return res.status(404).json({ reason: 'backup-not-found', message: 'Nenhum backup remoto encontrado para esta conta.' });
+  }
+
+  try {
+    const payload = JSON.parse(backup.payload);
+    return res.status(200).json({
+      payload,
+      savedAt: backup.saved_at,
+    });
+  } catch {
+    return res.status(500).json({ reason: 'backup-corrupted', message: 'Backup remoto inválido.' });
+  }
+});
+
+app.put('/users/me/backup', authenticateBearerToken, (req, res) => {
+  const userId = Number(req.auth.sub);
+  const payload = req.body?.payload;
+
+  if (!payload || typeof payload !== 'object') {
+    return res.status(400).json({ reason: 'invalid-payload', message: 'Payload de backup inválido.' });
+  }
+
+  const savedAt = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO user_backups (user_id, payload, saved_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(user_id)
+    DO UPDATE SET payload = excluded.payload, saved_at = excluded.saved_at
+  `).run(userId, JSON.stringify(payload), savedAt);
+
+  return res.status(200).json({ ok: true, savedAt });
 });
 
 app.listen(PORT, () => {
