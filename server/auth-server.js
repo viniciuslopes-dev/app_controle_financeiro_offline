@@ -23,6 +23,12 @@ const LOGIN_LOCK_MAX_SECONDS = Number(process.env.LOGIN_LOCK_MAX_SECONDS || 60 *
 const PASSWORD_RESET_TTL_SECONDS = Number(process.env.PASSWORD_RESET_TTL_SECONDS || 60 * 15);
 const REQUIRE_HTTPS = String(process.env.REQUIRE_HTTPS || 'true').toLowerCase() !== 'false';
 const ALLOW_INSECURE_LOCALHOST = String(process.env.ALLOW_INSECURE_LOCALHOST || 'true').toLowerCase() !== 'false';
+const CORS_ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const REFRESH_COOKIE_DOMAIN = String(process.env.REFRESH_COOKIE_DOMAIN || '').trim() || undefined;
+const REFRESH_COOKIE_SAME_SITE = String(process.env.REFRESH_COOKIE_SAME_SITE || 'lax').trim().toLowerCase();
 const PORT = Number(process.env.PORT || 3000);
 
 const db = new Database(DB_PATH);
@@ -116,7 +122,30 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(express.json());
 app.use(cookieParser());
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    if (!CORS_ALLOWED_ORIGINS.length || CORS_ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error('CORS origin not allowed'));
+  },
+  credentials: true,
+}));
+
+function resolveRefreshCookieSameSite() {
+  if (REFRESH_COOKIE_SAME_SITE === 'strict' || REFRESH_COOKIE_SAME_SITE === 'lax' || REFRESH_COOKIE_SAME_SITE === 'none') {
+    return REFRESH_COOKIE_SAME_SITE;
+  }
+
+  return 'lax';
+}
 
 function normalizeIdentifier(value) {
   return String(value || '').trim().toLowerCase();
@@ -358,7 +387,8 @@ function setRefreshCookie(res, token) {
   res.cookie(REFRESH_COOKIE_NAME, token, {
     httpOnly: true,
     secure: REQUIRE_HTTPS,
-    sameSite: 'strict',
+    sameSite: resolveRefreshCookieSameSite(),
+    domain: REFRESH_COOKIE_DOMAIN,
     path: '/',
     maxAge: REFRESH_TOKEN_TTL_SECONDS * 1000,
   });
@@ -368,7 +398,8 @@ function clearRefreshCookie(res) {
   res.clearCookie(REFRESH_COOKIE_NAME, {
     httpOnly: true,
     secure: REQUIRE_HTTPS,
-    sameSite: 'strict',
+    sameSite: resolveRefreshCookieSameSite(),
+    domain: REFRESH_COOKIE_DOMAIN,
     path: '/',
   });
 }

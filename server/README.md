@@ -67,10 +67,33 @@ npm start
 - `JWT_SECRET`
 - `JWT_TTL_SECONDS` (default: 900 = 15 min)
 - `REFRESH_TOKEN_TTL_SECONDS` (default: 7 dias)
+- `CORS_ALLOWED_ORIGINS` (lista separada por vírgula com origens permitidas, ex.: `https://app.seudominio.com,https://admin.seudominio.com`)
 - `REQUIRE_HTTPS` (default: `true`)
 - `ALLOW_INSECURE_LOCALHOST` (default: `true`)
+- `REFRESH_COOKIE_DOMAIN` (opcional, ex.: `.seudominio.com`)
+- `REFRESH_COOKIE_SAME_SITE` (`strict`, `lax` ou `none`; default: `lax`)
 - `LOGIN_RATE_WINDOW_SECONDS`
 - `LOGIN_RATE_MAX_ATTEMPTS`
 - `LOGIN_LOCK_BASE_SECONDS`
 - `LOGIN_LOCK_MAX_SECONDS`
 - `BCRYPT_ROUNDS`
+
+## Checklist operacional de produção
+
+### Front-end
+
+- [ ] Configurar `window.AUTH_API_BASE_URL` no deploy do front para a API publicada (`https://...`).
+- [ ] Publicar front em domínio definitivo com HTTPS válido.
+
+### Backend
+
+- [ ] Publicar backend com TLS válido (certificado confiável).
+- [ ] Definir `CORS_ALLOWED_ORIGINS` com os domínios do front e manter `credentials: true`.
+- [ ] Ajustar cookie de refresh para o domínio de publicação (`REFRESH_COOKIE_DOMAIN`) e política `SameSite` (`REFRESH_COOKIE_SAME_SITE`).
+- [ ] Em cenários cross-site, usar `REFRESH_COOKIE_SAME_SITE=none` com HTTPS obrigatório.
+
+### Dados e continuidade
+
+- [ ] Persistir o banco fora do container efêmero (`AUTH_DB_PATH` em volume/disco persistente).
+- [ ] Definir rotina de backup e teste de restauração do banco (`auth.db` + WAL/SHM quando aplicável).
+- [ ] Monitorar logs de autenticação/sincronização e estabelecer retenção.

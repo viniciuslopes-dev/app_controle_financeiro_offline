@@ -186,6 +186,10 @@ function getDataOriginStatusText() {
 }
 const AUTH_API_BASE_URL = normalizeText(String(window.AUTH_API_BASE_URL || '')).replace(/\/$/, '');
 
+if (!AUTH_API_BASE_URL) {
+  console.warn('[auth] window.AUTH_API_BASE_URL não configurado. Login/sincronização com backend ficarão indisponíveis até definir auth-config.js no deploy.');
+}
+
 function getAuthApiUrl(path) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   return `${AUTH_API_BASE_URL}${normalizedPath}`;
