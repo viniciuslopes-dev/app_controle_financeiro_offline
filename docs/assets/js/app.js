@@ -2,7 +2,6 @@ const STORAGE_KEY = 'finance_offline_transactions_v2';
 const LEGACY_STORAGE_KEY = 'finance_offline_transactions_v1';
 const CATEGORY_STORAGE_KEY = 'finance_offline_categories_v1';
 const SESSION_STORAGE_KEY = 'finance_offline_session_v1';
-const REMOTE_BACKUP_STORAGE_PREFIX = 'finance_offline_remote_backup_v1:';
 const SAFETY_SNAPSHOT_STORAGE_KEY = 'finance_offline_safety_snapshots_v1';
 const DEVICE_ID_STORAGE_KEY = 'finance_offline_device_id_v1';
 
@@ -671,14 +670,9 @@ function buildBackupPayload() {
   };
 }
 
-function getRemoteBackupStorageKey(userId) {
-  return `${REMOTE_BACKUP_STORAGE_PREFIX}${normalizeText(String(userId || '')).toLowerCase()}`;
-}
-
-async function uploadBackupForUser(userId, payload) {
-  const normalizedUserId = normalizeText(String(userId || ''));
-  if (!normalizedUserId) {
-    return { ok: false, message: 'Usuário inválido para upload de backup.' };
+async function uploadBackupForUser(payload) {
+  if (!currentUser || !currentUser.token) {
+    return { ok: false, message: 'Sessão expirada. Entre novamente para sincronizar.' };
   }
 
   const validation = validateBackupPayload(payload);
@@ -686,28 +680,50 @@ async function uploadBackupForUser(userId, payload) {
     return { ok: false, message: validation.message };
   }
 
-  localStorage.setItem(getRemoteBackupStorageKey(normalizedUserId), JSON.stringify({
-    savedAt: new Date().toISOString(),
-    payload,
-  }));
+  try {
+    const response = await fetch(getAuthApiUrl('/users/me/backup'), {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${currentUser.token}`,
+      },
+      body: JSON.stringify({ payload }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { ok: false, message: data.message || 'Falha ao enviar backup para a nuvem.' };
+    }
+  } catch {
+    return { ok: false, message: 'Sem conexão com o servidor para enviar backup.' };
+  }
 
   return { ok: true };
 }
 
-async function downloadBackupForUser(userId) {
-  const normalizedUserId = normalizeText(String(userId || ''));
-  if (!normalizedUserId) {
-    return { ok: false, message: 'Usuário inválido para download de backup.' };
-  }
-
-  const raw = localStorage.getItem(getRemoteBackupStorageKey(normalizedUserId));
-  if (!raw) {
-    return { ok: true, found: false };
+async function downloadBackupForUser() {
+  if (!currentUser || !currentUser.token) {
+    return { ok: false, message: 'Sessão expirada. Entre novamente para sincronizar.' };
   }
 
   try {
-    const remoteRecord = JSON.parse(raw);
-    const payload = remoteRecord && remoteRecord.payload ? remoteRecord.payload : remoteRecord;
+    const response = await fetch(getAuthApiUrl('/users/me/backup'), {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${currentUser.token}`,
+      },
+    });
+
+    if (response.status === 404) {
+      return { ok: true, found: false };
+    }
+
+    const remoteRecord = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { ok: false, message: remoteRecord.message || 'Falha ao baixar backup remoto.' };
+    }
+
+    const payload = remoteRecord && remoteRecord.payload ? remoteRecord.payload : null;
     const validation = validateBackupPayload(payload);
     if (!validation.valid) {
       return { ok: false, message: validation.message };
@@ -720,7 +736,7 @@ async function downloadBackupForUser(userId) {
       savedAt: remoteRecord && remoteRecord.savedAt ? remoteRecord.savedAt : null,
     };
   } catch {
-    return { ok: false, message: 'Backup remoto inválido ou corrompido.' };
+    return { ok: false, message: 'Sem conexão com o servidor para baixar backup.' };
   }
 }
 
@@ -943,15 +959,15 @@ function importBackupPayload(payload) {
   return applyBackupPayload(payload, { createSnapshot: true, snapshotReason: 'before-manual-import' });
 }
 
-async function handleRemoteBackupOnSignIn(userId) {
-  const remoteResult = await downloadBackupForUser(userId);
+async function handleRemoteBackupOnSignIn() {
+  const remoteResult = await downloadBackupForUser();
   if (!remoteResult.ok) {
     window.alert(remoteResult.message || 'Não foi possível baixar o backup remoto da conta.');
     return;
   }
 
   if (!remoteResult.found) {
-    const uploadResult = await uploadBackupForUser(userId, buildBackupPayload());
+    const uploadResult = await uploadBackupForUser(buildBackupPayload());
     if (!uploadResult.ok) {
       window.alert(uploadResult.message || 'Não foi possível enviar o backup local para a conta.');
     }
@@ -987,7 +1003,7 @@ async function handleRemoteBackupOnSignIn(userId) {
     return;
   }
 
-  const uploadResult = await uploadBackupForUser(userId, mergedResult.payload);
+  const uploadResult = await uploadBackupForUser(mergedResult.payload);
   if (!uploadResult.ok) {
     window.alert(`${formatSyncSummary(mergedResult.summary)}\n\nA aplicação local funcionou, mas falhou ao atualizar backup remoto.`);
     return;
@@ -2571,7 +2587,7 @@ if (sessionForm) {
     }
 
     renderSessionState();
-    await handleRemoteBackupOnSignIn(result.user.identifier);
+    await handleRemoteBackupOnSignIn();
   });
 }
 

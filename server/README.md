@@ -17,6 +17,16 @@
 - `POST /auth/logout`
   - Stateless (retorna 204)
 
+- `GET /users/me/backup`
+  - Header: `Authorization: Bearer <token>`
+  - Resposta 200: `{ "payload": { ... }, "savedAt": "ISO" }`
+  - Erro `404 { reason: "backup-not-found" }` quando a conta ainda não possui backup
+
+- `PUT /users/me/backup`
+  - Header: `Authorization: Bearer <token>`
+  - Body JSON: `{ "payload": { "version": "1.0", "transactions": [...], "categories": {...} } }`
+  - Resposta 200: `{ "ok": true, "savedAt": "ISO" }`
+
 ## Configuração rápida
 
 ```bash
