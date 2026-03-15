@@ -20,6 +20,7 @@ const LOGIN_RATE_WINDOW_SECONDS = Number(process.env.LOGIN_RATE_WINDOW_SECONDS |
 const LOGIN_RATE_MAX_ATTEMPTS = Number(process.env.LOGIN_RATE_MAX_ATTEMPTS || 10);
 const LOGIN_LOCK_BASE_SECONDS = Number(process.env.LOGIN_LOCK_BASE_SECONDS || 5);
 const LOGIN_LOCK_MAX_SECONDS = Number(process.env.LOGIN_LOCK_MAX_SECONDS || 60 * 15);
+const PASSWORD_RESET_TTL_SECONDS = Number(process.env.PASSWORD_RESET_TTL_SECONDS || 60 * 15);
 const REQUIRE_HTTPS = String(process.env.REQUIRE_HTTPS || 'true').toLowerCase() !== 'false';
 const ALLOW_INSECURE_LOCALHOST = String(process.env.ALLOW_INSECURE_LOCALHOST || 'true').toLowerCase() !== 'false';
 const PORT = Number(process.env.PORT || 3000);
@@ -88,6 +89,17 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_sync_transactions_user_changed
     ON sync_transactions(user_id, changed_at);
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_password_reset_tokens_hash ON password_reset_tokens(token_hash);
+  CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, expires_at);
 `);
 
 function ensureColumn(tableName, columnName, definition) {
@@ -228,6 +240,14 @@ function buildRefreshTokenRaw() {
 }
 
 function hashRefreshToken(rawToken) {
+  return crypto.createHash('sha256').update(rawToken).digest('hex');
+}
+
+function buildPasswordResetTokenRaw() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function hashPasswordResetToken(rawToken) {
   return crypto.createHash('sha256').update(rawToken).digest('hex');
 }
 
@@ -375,6 +395,26 @@ function revokeRefreshTokenByHash(tokenHash, replacedById = null) {
     SET revoked_at = ?, replaced_by_id = COALESCE(?, replaced_by_id)
     WHERE token_hash = ? AND revoked_at IS NULL
   `).run(nowIsoString(), replacedById, tokenHash);
+}
+
+function expireAllResetTokensForUser(userId) {
+  db.prepare(`
+    UPDATE password_reset_tokens
+    SET used_at = ?
+    WHERE user_id = ? AND used_at IS NULL
+  `).run(nowIsoString(), userId);
+}
+
+function createPasswordResetToken(userId) {
+  const token = buildPasswordResetTokenRaw();
+  const tokenHash = hashPasswordResetToken(token);
+  const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_SECONDS * 1000).toISOString();
+  db.prepare(`
+    INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(userId, tokenHash, expiresAt, nowIsoString());
+
+  return { token, expiresAt };
 }
 
 function authenticateBearerToken(req, res, next) {
@@ -580,6 +620,89 @@ app.post('/auth/refresh', (req, res) => {
     token: session.token,
     expiresAt: session.expiresAt,
   });
+});
+
+app.post('/auth/password-reset/request', (req, res) => {
+  const identifierValidation = validateIdentifier(req.body?.identifier);
+  if (!identifierValidation.valid) {
+    writeAuditLog({ identifier: normalizeIdentifier(req.body?.identifier), eventType: 'password-reset-request-invalid-identifier', success: false, req });
+    return sendApiError(res, 400, identifierValidation.reason, identifierValidation.message);
+  }
+
+  const identifier = identifierValidation.identifier;
+  const user = db.prepare('SELECT id, identifier, is_active FROM users WHERE identifier = ? LIMIT 1').get(identifier);
+
+  if (!user || !user.is_active) {
+    writeAuditLog({ identifier, eventType: 'password-reset-request-ignored', success: false, req });
+    return sendApiSuccess(res, 200, 'Se a conta existir, você receberá instruções para redefinir sua senha.');
+  }
+
+  expireAllResetTokensForUser(user.id);
+  const reset = createPasswordResetToken(user.id);
+  writeAuditLog({ userId: user.id, identifier, eventType: 'password-reset-request-success', success: true, req, details: { expiresAt: reset.expiresAt } });
+  return sendApiSuccess(res, 200, 'Token de redefinição emitido.', {
+    resetToken: reset.token,
+    expiresAt: reset.expiresAt,
+  });
+});
+
+app.post('/auth/password-reset/confirm', async (req, res) => {
+  const rawToken = String(req.body?.token || '').trim();
+  const secret = String(req.body?.secret || '');
+
+  if (!rawToken || !secret) {
+    writeAuditLog({ eventType: 'password-reset-confirm-invalid-input', success: false, req });
+    return sendApiError(res, 400, 'invalid-input', 'Token e nova senha são obrigatórios.');
+  }
+
+  const passwordValidation = validatePasswordPolicy(secret);
+  if (!passwordValidation.valid) {
+    writeAuditLog({ eventType: 'password-reset-confirm-weak-password', success: false, req });
+    return sendApiError(res, 400, passwordValidation.reason, passwordValidation.message);
+  }
+
+  const tokenHash = hashPasswordResetToken(rawToken);
+  const storedToken = db.prepare(`
+    SELECT prt.id, prt.user_id, prt.expires_at, prt.used_at, u.identifier, u.is_active
+    FROM password_reset_tokens prt
+    JOIN users u ON u.id = prt.user_id
+    WHERE prt.token_hash = ?
+    LIMIT 1
+  `).get(tokenHash);
+
+  if (!storedToken) {
+    writeAuditLog({ eventType: 'password-reset-confirm-invalid-token', success: false, req });
+    return sendApiError(res, 400, 'reset-token-invalid', 'Token de redefinição inválido.');
+  }
+
+  if (storedToken.used_at) {
+    writeAuditLog({ userId: storedToken.user_id, identifier: storedToken.identifier, eventType: 'password-reset-confirm-token-used', success: false, req });
+    return sendApiError(res, 400, 'reset-token-used', 'Este token já foi utilizado. Solicite um novo.');
+  }
+
+  if (parseIsoDate(storedToken.expires_at)?.getTime() <= Date.now()) {
+    db.prepare('UPDATE password_reset_tokens SET used_at = ? WHERE id = ?').run(nowIsoString(), storedToken.id);
+    writeAuditLog({ userId: storedToken.user_id, identifier: storedToken.identifier, eventType: 'password-reset-confirm-token-expired', success: false, req });
+    return sendApiError(res, 400, 'reset-token-expired', 'Token expirado. Solicite uma nova redefinição.');
+  }
+
+  if (!storedToken.is_active) {
+    writeAuditLog({ userId: storedToken.user_id, identifier: storedToken.identifier, eventType: 'password-reset-confirm-user-inactive', success: false, req });
+    return sendApiError(res, 403, 'account-disabled', 'Conta inativa.');
+  }
+
+  const newHash = await bcrypt.hash(secret, BCRYPT_ROUNDS);
+  const now = nowIsoString();
+  const run = db.transaction(() => {
+    db.prepare('UPDATE users SET password_hash = ?, failed_login_attempts = 0, lock_until = NULL WHERE id = ?').run(newHash, storedToken.user_id);
+    db.prepare('UPDATE password_reset_tokens SET used_at = ? WHERE id = ?').run(now, storedToken.id);
+    db.prepare('UPDATE password_reset_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL').run(now, storedToken.user_id);
+    db.prepare('UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').run(now, storedToken.user_id);
+  });
+  run();
+
+  writeAuditLog({ userId: storedToken.user_id, identifier: storedToken.identifier, eventType: 'password-reset-confirm-success', success: true, req });
+  return sendApiSuccess(res, 200, 'Senha redefinida com sucesso. Faça login com a nova senha.');
 });
 
 app.get('/auth/session', authenticateBearerToken, (req, res) => {

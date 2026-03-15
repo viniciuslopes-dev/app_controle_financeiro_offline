@@ -115,6 +115,12 @@ label {
 .hidden {
   display: none;
 }
+
+.password-recovery {
+  margin-top: .75rem;
+  padding-top: .5rem;
+  border-top: 1px dashed var(--border);
+}
 input, select, button {
   font: inherit;
   padding: .6rem .75rem;

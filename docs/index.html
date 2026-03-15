@@ -41,9 +41,32 @@
           </label>
           <button id="sign-in-button" type="submit">Entrar</button>
           <button id="create-account-button" type="button" class="secondary-btn">Criar conta</button>
+          <button id="forgot-password-toggle" type="button" class="secondary-btn">Esqueci minha senha</button>
           <button id="sign-out-button" type="button" class="secondary-btn">Sair</button>
         </form>
         <p class="form-help">Criar conta: identificador com 3-120 caracteres (a-z, 0-9, ., _, -, @) e senha com mínimo de 8 caracteres contendo letra e número.</p>
+        <section id="password-recovery-panel" class="password-recovery hidden" aria-live="polite">
+          <h3>Recuperação de senha</h3>
+          <form id="password-reset-request-form" class="nested-grid">
+            <label>
+              Identificador da conta
+              <input id="password-reset-identifier" autocomplete="username" placeholder="nome@exemplo.com" required />
+            </label>
+            <button type="submit">Solicitar token de reset</button>
+          </form>
+          <form id="password-reset-confirm-form" class="nested-grid">
+            <label>
+              Token de reset
+              <input id="password-reset-token" placeholder="Cole o token recebido" required />
+            </label>
+            <label>
+              Nova senha
+              <input id="password-reset-secret" type="password" autocomplete="new-password" placeholder="Mínimo 8 caracteres com letra e número" required />
+            </label>
+            <button type="submit">Redefinir senha</button>
+          </form>
+          <p id="password-reset-status" class="form-help">Solicite um token e em seguida informe token + nova senha para concluir.</p>
+        </section>
         <p id="session-status" aria-live="polite">Sessão: não autenticado (modo offline local).</p>
         <p id="sync-status" aria-live="polite">Sincronização: verificando conectividade...</p>
         <p id="data-origin-status" aria-live="polite">Origem dos dados: local pendente.</p>
