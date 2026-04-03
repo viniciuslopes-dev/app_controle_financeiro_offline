@@ -1016,6 +1016,7 @@ function sanitizeTransaction(tx, options = {}) {
     amount,
     date,
     recurrence: tx.recurrence && typeof tx.recurrence === 'object' ? tx.recurrence : null,
+    completed: tx.completed === true,
     updatedAt: keepUpdatedAt ? (typeof tx.updatedAt === 'string' ? tx.updatedAt : nowIsoString()) : nowIsoString(),
     deletedAt: keepUpdatedAt && typeof tx.deletedAt === 'string' ? tx.deletedAt : null,
     version: Number.isInteger(Number(tx.version)) && Number(tx.version) > 0 ? Number(tx.version) : 1,
@@ -1353,6 +1354,7 @@ function normalizeTransactionComparable(tx) {
     amount: tx.amount,
     date: tx.date,
     recurrence: tx.recurrence || null,
+    completed: tx.completed || false,
   };
 }
 
@@ -2409,13 +2411,15 @@ function renderList(items, month) {
   txList.innerHTML = sorted
     .map(
       (tx) => `
-      <li class="tx-item">
+      <li class="tx-item${tx.completed ? ' tx-completed' : ''}">
         <div>
           <strong>${tx.description}</strong>
           ${tx.recurrence ? '<span class="badge">recorrente</span>' : ''}
+          ${tx.completed ? '<span class="badge badge--done">realizado</span>' : ''}
           <div class="tx-meta">${tx.type} • ${tx.category} › ${tx.subcategory || 'Outros'} • ${formatDateBR(tx.date)} • ${formatMoney(tx.amount)}</div>
         </div>
         <div class="tx-actions">
+          <button class="complete-btn" data-id="${tx.id}" title="${tx.completed ? 'Desmarcar realizado' : 'Marcar como realizado'}">${tx.completed ? '✓' : '○'}</button>
           <button class="edit-btn" data-id="${tx.id}">Editar</button>
           <button class="delete-btn" data-id="${tx.id}">Excluir</button>
         </div>
@@ -2430,6 +2434,19 @@ function renderList(items, month) {
       const next = loadTransactions().filter((item) => item.id !== id);
       saveTransactions(next);
       render();
+    });
+  });
+
+  txList.querySelectorAll('.complete-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-id');
+      const all = loadTransactions();
+      const idx = all.findIndex((tx) => tx.id === id);
+      if (idx !== -1) {
+        all[idx] = { ...all[idx], completed: !all[idx].completed };
+        saveTransactions(all);
+        render();
+      }
     });
   });
 
