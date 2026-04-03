@@ -2408,6 +2408,13 @@ function renderList(items, month) {
   const filtered = filterByMonth(items, month);
   const sorted = [...filtered].sort((a, b) => (a.date < b.date ? 1 : -1));
 
+  const completedCount = filtered.filter((tx) => tx.completed).length;
+  const totalCount = filtered.length;
+  const counterEl = document.getElementById('tx-counter');
+  if (counterEl) {
+    counterEl.textContent = `${completedCount}/${totalCount}`;
+  }
+
   txList.innerHTML = sorted
     .map(
       (tx) => `
