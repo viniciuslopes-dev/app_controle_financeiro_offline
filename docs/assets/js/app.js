@@ -2438,6 +2438,8 @@ function renderList(items, month) {
   txList.querySelectorAll('.delete-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-id');
+      const confirmed = window.confirm('Deseja excluir este lançamento?');
+      if (!confirmed) return;
       const next = loadTransactions().filter((item) => item.id !== id);
       saveTransactions(next);
       render();
