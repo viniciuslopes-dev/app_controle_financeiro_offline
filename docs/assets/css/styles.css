@@ -506,6 +506,17 @@ button {
   border-radius: 10px;
   padding: .7rem;
 }
+.tx-counter {
+  font-size: .85rem;
+  font-weight: 600;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: .15rem .6rem;
+  margin-left: .4rem;
+  vertical-align: middle;
+  color: var(--muted);
+}
 .tx-completed {
   border-left: 3px solid var(--income);
   opacity: 0.82;
