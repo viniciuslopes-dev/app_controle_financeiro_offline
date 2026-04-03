@@ -2801,7 +2801,7 @@ function saveTransactionWithValidation(baseTx, recurrenceConfig = null) {
     const recurringTxs = createRecurringTransactions(baseTx, recurrenceConfig.frequency, recurrenceConfig.count);
     all.push(...recurringTxs);
   } else {
-    all.push({ ...baseTx, id: crypto.randomUUID() });
+    all.push({ ...baseTx, id: crypto.randomUUID(), completed: true });
   }
 
   saveTransactions(all);
