@@ -517,6 +517,11 @@ button {
   vertical-align: middle;
   color: var(--muted);
 }
+.tx-summary {
+  margin: .45rem 0 .75rem;
+  font-size: .85rem;
+  color: var(--muted);
+}
 .tx-completed {
   border-left: 3px solid var(--income);
   opacity: 0.82;

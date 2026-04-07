@@ -2410,9 +2410,19 @@ function renderList(items, month) {
 
   const completedCount = filtered.filter((tx) => tx.completed).length;
   const totalCount = filtered.length;
+  const completedAmount = filtered
+    .filter((tx) => tx.completed)
+    .reduce((sum, tx) => sum + tx.amount, 0);
+  const pendingAmount = filtered
+    .filter((tx) => !tx.completed)
+    .reduce((sum, tx) => sum + tx.amount, 0);
   const counterEl = document.getElementById('tx-counter');
+  const summaryEl = document.getElementById('tx-summary');
   if (counterEl) {
     counterEl.textContent = `${completedCount}/${totalCount}`;
+  }
+  if (summaryEl) {
+    summaryEl.textContent = `Realizado: ${formatMoney(completedAmount)} • Pendente: ${formatMoney(pendingAmount)}`;
   }
 
   txList.innerHTML = sorted
