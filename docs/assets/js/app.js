@@ -2405,7 +2405,7 @@ function migrateRecurringSeriesData(items) {
 }
 
 function renderList(items, month) {
-  const filtered = filterByMonth(items, month);
+  const filtered = filterByMonth(items, month).filter((tx) => tx.type !== 'income');
   const sorted = [...filtered].sort((a, b) => (a.date < b.date ? 1 : -1));
 
   const completedCount = filtered.filter((tx) => tx.completed).length;
