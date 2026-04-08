@@ -2405,15 +2405,16 @@ function migrateRecurringSeriesData(items) {
 }
 
 function renderList(items, month) {
-  const filtered = filterByMonth(items, month).filter((tx) => tx.type !== 'income');
-  const sorted = [...filtered].sort((a, b) => (a.date < b.date ? 1 : -1));
+  const monthItems = filterByMonth(items, month);
+  const outflowItems = monthItems.filter((tx) => tx.type !== 'income');
+  const sorted = [...monthItems].sort((a, b) => (a.date < b.date ? 1 : -1));
 
-  const completedCount = filtered.filter((tx) => tx.completed).length;
-  const totalCount = filtered.length;
-  const completedAmount = filtered
+  const completedCount = monthItems.filter((tx) => tx.completed).length;
+  const totalCount = monthItems.length;
+  const completedAmount = outflowItems
     .filter((tx) => tx.completed)
     .reduce((sum, tx) => sum + tx.amount, 0);
-  const pendingAmount = filtered
+  const pendingAmount = outflowItems
     .filter((tx) => !tx.completed)
     .reduce((sum, tx) => sum + tx.amount, 0);
   const counterEl = document.getElementById('tx-counter');
@@ -2422,7 +2423,7 @@ function renderList(items, month) {
     counterEl.textContent = `${completedCount}/${totalCount}`;
   }
   if (summaryEl) {
-    summaryEl.textContent = `Realizado: ${formatMoney(completedAmount)} • Pendente: ${formatMoney(pendingAmount)}`;
+    summaryEl.textContent = `Saídas — Realizado: ${formatMoney(completedAmount)} • Pendente: ${formatMoney(pendingAmount)}`;
   }
 
   txList.innerHTML = sorted
