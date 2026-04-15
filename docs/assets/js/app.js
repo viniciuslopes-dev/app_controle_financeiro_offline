@@ -1005,6 +1005,14 @@ function sanitizeTransaction(tx, options = {}) {
 
   const category = normalizeText(String(tx.category || FALLBACK_CATEGORY)) || FALLBACK_CATEGORY;
   const subcategory = normalizeText(String(tx.subcategory || FALLBACK_SUBCATEGORY)) || FALLBACK_SUBCATEGORY;
+  const normalizedProgress =
+    Number(tx.progress) === 1
+      ? 1
+      : Number(tx.progress) === 0.5
+        ? 0.5
+        : tx.completed === true
+          ? 1
+          : 0;
   const keepUpdatedAt = !!options.keepUpdatedAt;
 
   return {
@@ -1016,7 +1024,8 @@ function sanitizeTransaction(tx, options = {}) {
     amount,
     date,
     recurrence: tx.recurrence && typeof tx.recurrence === 'object' ? tx.recurrence : null,
-    completed: tx.completed === true,
+    progress: normalizedProgress,
+    completed: normalizedProgress === 1,
     updatedAt: keepUpdatedAt ? (typeof tx.updatedAt === 'string' ? tx.updatedAt : nowIsoString()) : nowIsoString(),
     deletedAt: keepUpdatedAt && typeof tx.deletedAt === 'string' ? tx.deletedAt : null,
     version: Number.isInteger(Number(tx.version)) && Number(tx.version) > 0 ? Number(tx.version) : 1,
@@ -1354,6 +1363,7 @@ function normalizeTransactionComparable(tx) {
     amount: tx.amount,
     date: tx.date,
     recurrence: tx.recurrence || null,
+    progress: tx.progress === 1 ? 1 : tx.progress === 0.5 ? 0.5 : 0,
     completed: tx.completed || false,
   };
 }
@@ -2408,15 +2418,30 @@ function renderList(items, month) {
   const monthItems = filterByMonth(items, month);
   const outflowItems = monthItems.filter((tx) => tx.type !== 'income');
   const sorted = [...monthItems].sort((a, b) => (a.date < b.date ? 1 : -1));
+  const getTxProgress = (tx) => (tx.progress === 1 ? 1 : tx.progress === 0.5 ? 0.5 : tx.completed ? 1 : 0);
+  const getNextProgress = (tx) => {
+    const current = getTxProgress(tx);
+    if (current === 0) return 0.5;
+    if (current === 0.5) return 1;
+    return 0;
+  };
+  const getProgressLabel = (tx) => {
+    const progress = getTxProgress(tx);
+    if (progress === 1) return 'realizado';
+    if (progress === 0.5) return 'parcial (50%)';
+    return '';
+  };
+  const getProgressButton = (tx) => {
+    const progress = getTxProgress(tx);
+    if (progress === 1) return { icon: '●', title: 'Marcar como não realizado' };
+    if (progress === 0.5) return { icon: '◐', title: 'Marcar como realizado (100%)' };
+    return { icon: '○', title: 'Marcar 50% como realizado' };
+  };
 
-  const completedCount = monthItems.filter((tx) => tx.completed).length;
+  const completedCount = monthItems.filter((tx) => getTxProgress(tx) > 0).length;
   const totalCount = monthItems.length;
-  const completedAmount = outflowItems
-    .filter((tx) => tx.completed)
-    .reduce((sum, tx) => sum + tx.amount, 0);
-  const pendingAmount = outflowItems
-    .filter((tx) => !tx.completed)
-    .reduce((sum, tx) => sum + tx.amount, 0);
+  const completedAmount = outflowItems.reduce((sum, tx) => sum + tx.amount * getTxProgress(tx), 0);
+  const pendingAmount = outflowItems.reduce((sum, tx) => sum + tx.amount * (1 - getTxProgress(tx)), 0);
   const counterEl = document.getElementById('tx-counter');
   const summaryEl = document.getElementById('tx-summary');
   if (counterEl) {
@@ -2429,15 +2454,15 @@ function renderList(items, month) {
   txList.innerHTML = sorted
     .map(
       (tx) => `
-      <li class="tx-item${tx.completed ? ' tx-completed' : ''}">
+      <li class="tx-item${getTxProgress(tx) === 1 ? ' tx-completed' : ''}${getTxProgress(tx) === 0.5 ? ' tx-partial' : ''}">
         <div>
           <strong>${tx.description}</strong>
           ${tx.recurrence ? '<span class="badge">recorrente</span>' : ''}
-          ${tx.completed ? '<span class="badge badge--done">realizado</span>' : ''}
+          ${getProgressLabel(tx) ? `<span class="badge badge--done">${getProgressLabel(tx)}</span>` : ''}
           <div class="tx-meta">${tx.type} • ${tx.category} › ${tx.subcategory || 'Outros'} • ${formatDateBR(tx.date)} • ${formatMoney(tx.amount)}</div>
         </div>
         <div class="tx-actions">
-          <button class="complete-btn" data-id="${tx.id}" title="${tx.completed ? 'Desmarcar realizado' : 'Marcar como realizado'}">${tx.completed ? '✓' : '○'}</button>
+          <button class="complete-btn" data-id="${tx.id}" title="${getProgressButton(tx).title}">${getProgressButton(tx).icon}</button>
           <button class="edit-btn" data-id="${tx.id}">Editar</button>
           <button class="delete-btn" data-id="${tx.id}">Excluir</button>
         </div>
@@ -2463,7 +2488,8 @@ function renderList(items, month) {
       const all = loadTransactions();
       const idx = all.findIndex((tx) => tx.id === id);
       if (idx !== -1) {
-        all[idx] = { ...all[idx], completed: !all[idx].completed };
+        const nextProgress = getNextProgress(all[idx]);
+        all[idx] = { ...all[idx], progress: nextProgress, completed: nextProgress === 1 };
         saveTransactions(all);
         render();
       }
@@ -2814,7 +2840,7 @@ function saveTransactionWithValidation(baseTx, recurrenceConfig = null) {
     const recurringTxs = createRecurringTransactions(baseTx, recurrenceConfig.frequency, recurrenceConfig.count);
     all.push(...recurringTxs);
   } else {
-    all.push({ ...baseTx, id: crypto.randomUUID(), completed: true });
+    all.push({ ...baseTx, id: crypto.randomUUID(), progress: 1, completed: true });
   }
 
   saveTransactions(all);

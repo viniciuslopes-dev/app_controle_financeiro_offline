@@ -526,6 +526,9 @@ button {
   border-left: 3px solid var(--income);
   opacity: 0.82;
 }
+.tx-partial {
+  border-left: 3px solid #f59e0b;
+}
 .tx-meta {
   color: var(--muted);
   font-size: .85rem;
@@ -568,6 +571,10 @@ button {
 .tx-completed .complete-btn {
   color: var(--income);
   border-color: var(--income);
+}
+.tx-partial .complete-btn {
+  color: #f59e0b;
+  border-color: #f59e0b;
 }
 .edit-btn {
   background: #1d4ed8;
